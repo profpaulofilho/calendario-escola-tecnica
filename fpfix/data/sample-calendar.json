@@ -1,0 +1,37 @@
+{
+  "clientName": "Cliente Exemplo",
+  "unitName": "SENAI Bahia",
+  "startDate": "2026-02-02",
+  "hoursPerDay": 4,
+  "totalHours": 200,
+  "calculationMode": "monthly-quota",
+  "blocks": [
+    {
+      "type": "holiday",
+      "description": "Carnaval",
+      "start": "2026-02-16",
+      "end": "2026-02-17"
+    },
+    {
+      "type": "holiday",
+      "description": "Sexta-feira Santa",
+      "start": "2026-04-03",
+      "end": "2026-04-03"
+    },
+    {
+      "type": "holiday",
+      "description": "Corpus Christi",
+      "start": "2026-06-04",
+      "end": "2026-06-04"
+    }
+  ],
+  "monthlyQuotas": {
+    "2026-02": 9,
+    "2026-03": 8,
+    "2026-04": 8,
+    "2026-05": 9,
+    "2026-06": 8,
+    "2026-07": 8
+  },
+  "userName": "Joao da Silva"
+}

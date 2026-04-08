@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Calculadora de Fase Prática | SENAI</title>
+  <meta name="description" content="Ferramenta para planejamento da fase prática de jovens aprendizes." />
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <img class="brand-logo" src="assets/senai-logo.png" alt="SENAI" />
+        <div>
+          <p class="eyebrow">SENAI • Aprendizagem Profissional</p>
+          <h1>Calculadora de Fase Prática</h1>
+          <p class="hero-text">Preencha os dados, aplique bloqueios quando necessário, gere o calendário e baixe o PDF.</p>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <button id="themeToggle" class="ghost-btn" type="button" aria-label="Alternar tema">🌙 Tema escuro</button>
+      </div>
+    </header>
+
+    <section class="hero-strip">
+      <article class="hero-metric">
+        <span>Dias de prática</span>
+        <strong id="heroTotalDias">0</strong>
+      </article>
+      <article class="hero-metric">
+        <span>Data final</span>
+        <strong id="heroDataFim">--</strong>
+      </article>
+    </section>
+
+    <main class="layout">
+      <section class="panel controls-panel">
+        <div class="section-title">
+          <div>
+            <p class="section-kicker">Preenchimento</p>
+            <h2>1. Dados principais</h2>
+          </div>
+          <button id="modeToggle" class="badge badge-btn" type="button">Modo simples</button>
+        </div>
+
+        <div class="grid two">
+          <label>
+            Responsável pelas informações
+            <input id="fillerName" type="text" placeholder="Ex.: José da Silva" />
+          </label>
+          <label>
+            Empresa / Cliente
+            <input id="clientName" type="text" placeholder="Ex.: Empresa Alfa" />
+          </label>
+          <label>
+            Unidade SENAI
+            <input id="unitName" type="text" placeholder="Ex.: Dendezeiros" />
+          </label>
+          <label>
+            Início da fase prática
+            <input id="startDate" type="date" />
+          </label>
+          <label>
+            Horas por dia
+            <input id="hoursPerDay" type="number" min="1" max="12" value="4" />
+          </label>
+          <label>
+            Carga horária total
+            <input id="totalHours" type="number" min="1" step="1" value="200" />
+          </label>
+          <label class="full-width advanced-only">
+            Forma de cálculo
+            <select id="calculationMode">
+              <option value="automatic">Automático por dias úteis</option>
+              <option value="monthly-quota">Calendário personalizado por mês</option>
+            </select>
+          </label>
+        </div>
+
+        <section class="subpanel">
+          <div>
+            <strong>2. Feriados automáticos</strong>
+            <small>Carrega feriados nacionais automaticamente pela BrasilAPI.</small>
+          </div>
+
+          <div class="inline-toggle spacing-top">
+            <label class="check-inline">
+              <input id="autoHolidaysEnabled" type="checkbox" checked />
+              <span>Considerar feriados nacionais automaticamente</span>
+            </label>
+            <button class="secondary-btn" id="btnRefreshHolidays" type="button">Atualizar feriados</button>
+          </div>
+
+          <div id="holidayStatus" class="helper-text spacing-top">Os feriados nacionais serão carregados ao gerar o calendário.</div>
+        </section>
+
+        <section class="subpanel" open>
+          <div>
+            <strong>3. Bloqueios</strong>
+            <small>Cadastre feriados, recessos ou outras pausas.</small>
+          </div>
+
+          <div class="grid two compact spacing-top">
+            <label>
+              Tipo
+              <select id="blockType">
+                <option value="holiday">Feriado</option>
+                <option value="recess">Recesso</option>
+                <option value="admin-leave">Folga administrativa</option>
+                <option value="training">Ação pedagógica</option>
+              </select>
+            </label>
+            <label>
+              Descrição
+              <input id="blockDescription" type="text" placeholder="Ex.: Tiradentes" />
+            </label>
+            <label>
+              Data inicial
+              <input id="blockStart" type="date" />
+            </label>
+            <label>
+              Data final
+              <input id="blockEnd" type="date" />
+            </label>
+          </div>
+
+          <div class="inline-actions spacing-top">
+            <button class="secondary-btn" id="btnAddBlock" type="button">Adicionar bloqueio</button>
+          </div>
+
+          <div id="blockList" class="tag-list empty-state spacing-top">Nenhum bloqueio cadastrado.</div>
+        </section>
+
+        <section class="subpanel advanced-only" id="quotaPanel">
+          <div>
+            <strong>4. Calendário personalizado por mês</strong>
+            <small>Use quando já houver quantidade de dias definida em cada mês.</small>
+          </div>
+          <p class="helper-text spacing-top">Preencha apenas os meses que terão dias de prática.</p>
+          <div id="monthlyQuotaContainer" class="quota-grid spacing-top"></div>
+        </section>
+
+        <section class="subpanel guide-panel">
+          <h3>5. Como usar</h3>
+          <ol class="guide-list">
+            <li>Preencha os dados principais.</li>
+            <li>Cadastre os bloqueios quando houver.</li>
+            <li>Clique em <strong>Gerar calendário</strong>.</li>
+            <li>Confira o resultado e clique em <strong>Baixar PDF</strong>.</li>
+          </ol>
+        </section>
+
+        <div class="actions">
+          <button id="btnGenerate" type="button">Gerar calendário</button>
+          <button id="btnExportPdf" class="secondary" type="button">Baixar PDF</button>
+          <button id="btnReset" class="danger" type="button">Limpar dados</button>
+        </div>
+      </section>
+
+      <section class="panel results-panel">
+        <div class="summary-grid" id="summaryGrid">
+          <article>
+            <span>Dias de prática</span>
+            <strong id="sumPhaseDays">--</strong>
+          </article>
+          <article>
+            <span>Horas por dia</span>
+            <strong id="sumHoursPerDay">--</strong>
+          </article>
+          <article>
+            <span>Carga horária</span>
+            <strong id="sumTotalHours">--</strong>
+          </article>
+          <article>
+            <span>Data final</span>
+            <strong id="sumEndDate">--</strong>
+          </article>
+        </div>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="calendar" type="button">Calendário</button>
+          <button class="tab" data-tab="report" type="button">Resumo</button>
+        </div>
+
+        <div class="tab-content active" id="tab-calendar">
+          <div id="calendarLegend" class="legend"></div>
+          <div id="calendarMount" class="calendar-mount empty-state">Preencha os dados e clique em <strong>Gerar calendário</strong>.</div>
+        </div>
+
+        <div class="tab-content" id="tab-report">
+          <div id="reportMount" class="report-box empty-state">O resumo do contrato será exibido aqui.</div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">Desenvolvido por Paulo da Silva Filho - Especialista em TI - GEP - BAHIA- 2026</footer>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Fase prática SENAI">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0f62fe"/>
+      <stop offset="100%" stop-color="#083b96"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="16" fill="url(#g)"/>
+  <rect x="14" y="16" width="36" height="32" rx="6" fill="#ffffff" opacity="0.95"/>
+  <path d="M20 26h24M20 32h16M20 38h20" stroke="#0f62fe" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M44 44l6 6" stroke="#7c3aed" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="38" cy="38" r="8" fill="none" stroke="#7c3aed" stroke-width="4"/>
+</svg>
