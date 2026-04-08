@@ -111,7 +111,7 @@ function bindElements() {
     'blockType', 'blockDescription', 'blockStart', 'blockEnd', 'blockList', 'monthlyQuotaContainer',
     'btnAddBlock', 'btnGenerate', 'btnReset', 'btnExportPdf', 'calendarLegend', 'calendarMount',
     'reportMount', 'sumPhaseDays', 'sumHoursPerDay', 'sumTotalHours', 'sumEndDate', 'heroTotalDias',
-    'heroDataFim', 'themeToggle', 'quotaPanel', 'modeToggle', 'autoNationalHolidays', 'btnRefreshHolidays'
+    'heroDataFim', 'themeToggle', 'quotaPanel', 'modeToggle'
   ].forEach((id) => { els[id] = document.getElementById(id); });
 }
 
@@ -123,8 +123,6 @@ function bindEvents() {
   els.calculationMode.addEventListener('change', updateQuotaPanelVisibility);
   els.themeToggle.addEventListener('click', toggleTheme);
   els.modeToggle.addEventListener('click', toggleUiMode);
-  if (els.btnRefreshHolidays) els.btnRefreshHolidays.addEventListener('click', refreshAutomaticHolidays);
-  if (els.autoNationalHolidays) els.autoNationalHolidays.addEventListener('change', handleAutoHolidayToggle);
   document.querySelectorAll('.weekday-check').forEach((checkbox) => {
     checkbox.addEventListener('change', handleWeekdaySelectionChange);
   });
@@ -138,7 +136,7 @@ function bindEvents() {
 function enableAutoSave() {
   const watchedFields = [
     els.fillerName, els.clientName, els.unitName, els.startDate,
-    els.hoursPerDay, els.totalHours, els.calculationMode, els.autoNationalHolidays,
+    els.hoursPerDay, els.totalHours, els.calculationMode,
     els.blockType, els.blockDescription, els.blockStart, els.blockEnd,
     ...document.querySelectorAll('.weekday-check')
   ];
@@ -159,7 +157,6 @@ function saveAppData() {
     hoursPerDay: els.hoursPerDay.value || '',
     totalHours: els.totalHours.value || '',
     calculationMode: els.calculationMode.value || 'automatic',
-    autoNationalHolidays: !!(els.autoNationalHolidays && els.autoNationalHolidays.checked),
     uiMode: state.uiMode || 'simple',
     blocks: Array.isArray(state.blocks) ? state.blocks : [],
     monthlyQuotas: state.monthlyQuotas || {},
@@ -182,7 +179,6 @@ function loadAppData() {
   if (payload.hoursPerDay !== undefined && payload.hoursPerDay !== '') els.hoursPerDay.value = payload.hoursPerDay;
   if (payload.totalHours !== undefined && payload.totalHours !== '') els.totalHours.value = payload.totalHours;
   if (payload.calculationMode) els.calculationMode.value = payload.calculationMode;
-  if (els.autoNationalHolidays) els.autoNationalHolidays.checked = !!payload.autoNationalHolidays;
   if (payload.uiMode === 'simple' || payload.uiMode === 'advanced') {
     state.uiMode = payload.uiMode;
     try { window.localStorage.setItem('fase-pratica-ui-mode', state.uiMode); } catch (error) { console.error(error); }
@@ -375,7 +371,7 @@ function refreshBlockList() {
   els.blockList.innerHTML = visibleBlocks.map(({ block, index }) => `
     <div class="block-item">
       <div class="block-meta">
-        <strong>${escapeHtml(block.description)}${block.automatic ? ' [automatico]' : ''}</strong>
+        <strong>${escapeHtml(block.description)}${block.automatic ? ` [automatico${block.holidayScope ? ' - ' + escapeHtml(block.holidayScope) : ''}]` : ''}</strong>
         <small>${friendlyBlockType(block.type)} • ${formatDateBR(block.start)} ate ${formatDateBR(block.end)}</small>
       </div>
       ${block.automatic ? '' : `<button class="secondary-btn icon-btn" type="button" data-remove-block="${index}" aria-label="Remover bloqueio">✕</button>`}
@@ -405,28 +401,7 @@ function removeAutomaticBlocks() {
   saveAppData();
 }
 
-function handleAutoHolidayToggle() {
-  if (!els.autoNationalHolidays.checked) {
-    removeAutomaticBlocks();
-  }
-  saveAppData();
-}
-
-async function refreshAutomaticHolidays() {
-  const startDate = els.startDate.value;
-  const hoursPerDay = Number(els.hoursPerDay.value || 0);
-  const totalHours = Number(els.totalHours.value || 0);
-  if (!startDate) {
-    alert('Informe a data de inicio antes de atualizar os feriados.');
-    return;
-  }
-  if (!els.autoNationalHolidays.checked) {
-    els.autoNationalHolidays.checked = true;
-  }
-  await ensureAutomaticHolidays(startDate, totalHours || 200, hoursPerDay || 4, true);
-}
-
-async function ensureAutomaticHolidays(startDate, totalHours, hoursPerDay, notify = false) {
+async function ensureAutomaticHolidays(startDate, totalHours, hoursPerDay) {
   const requiredDays = Math.max(1, Math.ceil((totalHours || 1) / Math.max(hoursPerDay || 1, 1)));
   const start = new Date(`${startDate}T00:00:00`);
   const approxEnd = new Date(start);
@@ -436,29 +411,51 @@ async function ensureAutomaticHolidays(startDate, totalHours, hoursPerDay, notif
   removeAutomaticBlocks();
   try {
     const fetched = [];
+    const seen = new Set();
     for (const year of years) {
       const response = await fetch(`https://brasilapi.com.br/api/feriados/v1/${year}`);
       if (!response.ok) throw new Error(`Falha ao consultar feriados de ${year}.`);
       const data = await response.json();
       data.forEach((item) => {
         if (item && item.date) {
+          const key = `national-${item.date}`;
+          if (seen.has(key)) return;
+          seen.add(key);
           fetched.push({
             type: 'holiday',
             description: item.name || 'Feriado nacional',
             start: item.date,
             end: item.date,
             automatic: true,
+            holidayScope: 'Nacional',
           });
         }
+      });
+
+      [
+        { date: `${year}-06-24`, description: 'Sao Joao', scope: 'Bahia' },
+        { date: `${year}-07-02`, description: 'Independencia da Bahia', scope: 'Bahia' },
+        { date: `${year}-12-08`, description: 'Nossa Senhora da Conceicao da Praia', scope: 'Salvador/BA' },
+      ].forEach((item) => {
+        const key = `${item.scope}-${item.date}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        fetched.push({
+          type: 'holiday',
+          description: item.description,
+          start: item.date,
+          end: item.date,
+          automatic: true,
+          holidayScope: item.scope,
+        });
       });
     }
     state.blocks = [...state.blocks.filter((b) => !b.automatic), ...fetched].sort((a, b) => a.start.localeCompare(b.start));
     refreshBlockList();
     saveAppData();
-    if (notify) alert('Feriados nacionais atualizados com sucesso.');
   } catch (error) {
     console.error(error);
-    alert('Nao foi possivel atualizar os feriados nacionais automaticamente.');
+    alert('Nao foi possivel atualizar automaticamente os feriados nacionais e da Bahia.');
   }
 }
 
@@ -485,11 +482,7 @@ async function generateSchedule() {
     return;
   }
 
-  if (els.autoNationalHolidays && els.autoNationalHolidays.checked) {
-    await ensureAutomaticHolidays(startDate, totalHours, hoursPerDay);
-  } else {
-    removeAutomaticBlocks();
-  }
+  await ensureAutomaticHolidays(startDate, totalHours, hoursPerDay);
 
   let phaseDays = [];
   if (mode === 'monthly-quota') {
@@ -649,7 +642,7 @@ function renderReport(hoursPerDay, totalHours, mode) {
   `).join('');
   const displayBlocks = getBlocksWithinCurrentPeriod();
   const blocksHtml = displayBlocks.length
-    ? `<ul>${displayBlocks.map((block) => `<li>${escapeHtml(block.description)} - ${friendlyBlockType(block.type)} (${formatDateBR(block.start)} ate ${formatDateBR(block.end)})${block.automatic ? ' [automatico]' : ''}</li>`).join('')}</ul>`
+    ? `<ul>${displayBlocks.map((block) => `<li>${escapeHtml(block.description)} - ${friendlyBlockType(block.type)} (${formatDateBR(block.start)} ate ${formatDateBR(block.end)})${block.automatic ? ` [automatico${block.holidayScope ? ' - ' + escapeHtml(block.holidayScope) : ''}]` : ''}</li>`).join('')}</ul>`
     : '<p>Nenhum bloqueio dentro do periodo calculado.</p>';
 
   els.reportMount.className = 'report-box';
@@ -1112,7 +1105,6 @@ function resetAll() {
   if (!confirm('Deseja limpar os dados salvos da ficha?')) return;
 
   state.blocks = [];
-  if (els.autoNationalHolidays) els.autoNationalHolidays.checked = false;
   state.monthlyQuotas = {};
   state.phaseDays = [];
   state.reportRows = [];
