@@ -880,10 +880,29 @@ function drawPdfMonthlySummary(pdf, margin, contentWidth, y, pageHeight, senaiLo
 }
 
 function drawPdfBlocks(pdf, margin, contentWidth, y, pageHeight, senaiLogoDataUrl) {
+  const topY = 24;
+  const lineHeight = 5;
+  const sectionBottomPadding = 6;
+
   if (y > pageHeight - 40) {
     pdf.addPage();
-    y = margin;
+    drawPdfPageHeader(pdf, 'Resumo da fase pratica', senaiLogoDataUrl);
+    y = topY;
   }
+
+  const startNewPage = () => {
+    pdf.addPage();
+    drawPdfPageHeader(pdf, 'Resumo da fase pratica', senaiLogoDataUrl);
+    pdf.setTextColor(17, 24, 39);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(15);
+    y = topY;
+    pdf.text('Bloqueios cadastrados', margin, y);
+    y += 8;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(10);
+  };
+
   pdf.setTextColor(17, 24, 39);
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(15);
@@ -901,16 +920,20 @@ function drawPdfBlocks(pdf, margin, contentWidth, y, pageHeight, senaiLogoDataUr
   displayBlocks.forEach((block) => {
     const line = `${block.description} - ${friendlyBlockType(block.type)} (${formatDateBR(block.start)} ate ${formatDateBR(block.end)})`;
     const lines = pdf.splitTextToSize(line, contentWidth - 6);
-    const neededHeight = (lines.length * 5) + 3;
+    const neededHeight = (lines.length * lineHeight) + 2;
+
     if (y + neededHeight > pageHeight - margin) {
-      pdf.addPage();
-      drawPdfPageHeader(pdf, 'Resumo da fase pratica', senaiLogoDataUrl);
-      y = 24;
+      startNewPage();
     }
+
+    pdf.setTextColor(17, 24, 39);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(10);
     pdf.text(lines, margin, y);
     y += neededHeight;
   });
-  return y + 6;
+
+  return y + sectionBottomPadding;
 }
 
 function appendCalendarPages(pdf, margin, contentWidth, pageHeight, senaiLogoDataUrl) {
