@@ -780,6 +780,8 @@ function appendCalendarPagesLandscape(pdf, senaiLogoDataUrl) {
     const y = gridTop + row * (cardH + gapY);
     drawMonthCalendarPdfCompact(pdf, monthInfo, x, y, cardW, cardH);
   });
+
+  appendLandscapeBlockSummary(pdf, senaiLogoDataUrl);
 }
 
 function drawLandscapeCalendarHeader(pdf, logoDataUrl) {
@@ -807,6 +809,108 @@ function drawLandscapeCalendarFooter(pdf, x, y) {
   pdf.setFontSize(7.5);
   pdf.setTextColor(100, 116, 139);
   pdf.text('Desenvolvido por Paulo da Silva Filho - Especialista em TI - GEP - BAHIA - 2026', x, y);
+}
+
+function appendLandscapeBlockSummary(pdf, senaiLogoDataUrl) {
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const marginX = 10;
+  const topY = 22;
+  const bottomY = pageHeight - 10;
+  const columnGap = 8;
+  const columnWidth = (pageWidth - (marginX * 2) - columnGap) / 2;
+
+  const displayBlocks = getBlocksWithinCurrentPeriod().sort((a, b) => {
+    const dateCompare = a.start.localeCompare(b.start);
+    if (dateCompare !== 0) return dateCompare;
+    return (a.description || '').localeCompare(b.description || '');
+  });
+  const automaticBlocks = displayBlocks.filter((block) => block.automatic);
+  const manualBlocks = displayBlocks.filter((block) => !block.automatic);
+
+  pdf.addPage('a4', 'landscape');
+  drawLandscapeSummaryHeader(pdf, senaiLogoDataUrl);
+  drawLandscapeCalendarFooter(pdf, marginX, pageHeight - 4);
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(10.5);
+  pdf.setTextColor(17, 24, 39);
+  pdf.text('Resumo de feriados e bloqueios', marginX, 16.5);
+
+  const drawColumn = (title, items, x, startY) => {
+    let y = startY;
+    pdf.setFillColor(241, 245, 249);
+    pdf.setDrawColor(203, 213, 225);
+    pdf.roundedRect(x, y, columnWidth, 8, 2, 2, 'FD');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(10);
+    pdf.setTextColor(30, 41, 59);
+    pdf.text(title, x + 3, y + 5.3);
+    y += 11;
+
+    if (!items.length) {
+      pdf.setFont('helvetica', 'italic');
+      pdf.setFontSize(9);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text('Nenhum registro dentro do periodo calculado.', x + 2, y);
+      return;
+    }
+
+    items.forEach((block) => {
+      const dateLabel = block.start === block.end
+        ? formatDateBR(block.start)
+        : `${formatDateBR(block.start)} a ${formatDateBR(block.end)}`;
+      const scope = block.automatic && block.holidayScope ? ` (${block.holidayScope})` : '';
+      const line = `${dateLabel} - ${block.description}${scope}`;
+      const lines = pdf.splitTextToSize(line, columnWidth - 6);
+      const lineHeight = 4.3;
+      const needed = 2 + (lines.length * lineHeight) + 2;
+      if (y + needed > bottomY) {
+        pdf.addPage('a4', 'landscape');
+        drawLandscapeSummaryHeader(pdf, senaiLogoDataUrl);
+        drawLandscapeCalendarFooter(pdf, marginX, pageHeight - 4);
+        pdf.setFillColor(241, 245, 249);
+        pdf.setDrawColor(203, 213, 225);
+        pdf.roundedRect(x, topY, columnWidth, 8, 2, 2, 'FD');
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(10);
+        pdf.setTextColor(30, 41, 59);
+        pdf.text(title, x + 3, topY + 5.3);
+        y = topY + 11;
+      }
+      const color = pdfBlockFillColor(block.type);
+      pdf.setFillColor(color[0], color[1], color[2]);
+      pdf.roundedRect(x + 0.5, y - 3.2, 2.6, 2.6, 0.6, 0.6, 'F');
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(9);
+      pdf.setTextColor(31, 41, 55);
+      pdf.text(lines, x + 4.2, y);
+      y += needed;
+    });
+  };
+
+  drawColumn('Feriados automaticos', automaticBlocks, marginX, topY);
+  drawColumn('Bloqueios manuais', manualBlocks, marginX + columnWidth + columnGap, topY);
+}
+
+function drawLandscapeSummaryHeader(pdf, logoDataUrl) {
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  pdf.setFillColor(255, 255, 255);
+  pdf.rect(0, 0, pageWidth, 18, 'F');
+  if (logoDataUrl) {
+    pdf.addImage(logoDataUrl, 'PNG', 8, 3, 44, 10);
+  }
+  pdf.setTextColor(17, 24, 39);
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(14);
+  pdf.text('Resumo de feriados e bloqueios', pageWidth / 2, 8, { align: 'center' });
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(8.5);
+  const periodStart = state.phaseDays[0] ? formatDateBR(state.phaseDays[0]) : '--';
+  const periodEnd = state.endDate ? formatDateBR(state.endDate) : '--';
+  pdf.text(`${periodStart} ate ${periodEnd}`, pageWidth / 2, 12.8, { align: 'center' });
+  pdf.setDrawColor(209, 213, 219);
+  pdf.line(8, 15, pageWidth - 8, 15);
 }
 
 function drawMonthCalendarPdfCompact(pdf, monthInfo, x, y, width, height) {
