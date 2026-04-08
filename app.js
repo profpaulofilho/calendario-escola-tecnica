@@ -726,26 +726,13 @@ async function exportPdf() {
 
   try {
     const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const senaiLogoDataUrl = await getSenaiLogoDataUrl();
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const margin = 12;
-    const contentWidth = pageWidth - (margin * 2);
-    let y = margin;
-
-    y = drawPdfCover(pdf, margin, contentWidth, y, senaiLogoDataUrl);
-    pdf.addPage();
-    y = margin;
-    drawPdfPageHeader(pdf, 'Resumo da fase pratica', senaiLogoDataUrl);
-    y = 24;
-    y = drawPdfMonthlySummary(pdf, margin, contentWidth, y, pageHeight, senaiLogoDataUrl);
-    y = drawPdfBlocks(pdf, margin, contentWidth, y, pageHeight, senaiLogoDataUrl);
-    appendCalendarPages(pdf, margin, contentWidth, pageHeight, senaiLogoDataUrl);
+    appendCalendarPagesLandscape(pdf, senaiLogoDataUrl);
 
     const safeFiller = sanitizeFilePart(els.fillerName.value || 'ficha');
     const safeClient = sanitizeFilePart(els.clientName.value || 'cliente');
-    pdf.save(`calendario-fase-pratica-${safeFiller}-${safeClient}.pdf`);
+    pdf.save(`calendario-fase-pratica-grade-${safeFiller}-${safeClient}.pdf`);
   } catch (error) {
     console.error(error);
     alert(`Nao foi possivel gerar o PDF. ${error && error.message ? error.message : ''}`.trim());
@@ -753,6 +740,186 @@ async function exportPdf() {
     els.btnExportPdf.disabled = false;
     els.btnExportPdf.textContent = originalText;
   }
+}
+
+
+function appendCalendarPagesLandscape(pdf, senaiLogoDataUrl) {
+  const grouped = groupMonthsBetween(state.phaseDays[0], state.phaseDays[state.phaseDays.length - 1]);
+  const months = [];
+  Object.entries(grouped).forEach(([year, items]) => {
+    items.forEach((item) => months.push({ year: Number(year), month: item.month }));
+  });
+
+  const monthsPerPage = 6;
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const marginX = 8;
+  const marginTop = 8;
+  const marginBottom = 8;
+  const headerH = 14;
+  const footerH = 6;
+  const gapX = 4;
+  const gapY = 4;
+  const cols = 3;
+  const rows = 2;
+  const gridTop = marginTop + headerH;
+  const gridHeight = pageHeight - gridTop - marginBottom - footerH;
+  const cardW = (pageWidth - (marginX * 2) - (gapX * (cols - 1))) / cols;
+  const cardH = (gridHeight - (gapY * (rows - 1))) / rows;
+
+  months.forEach((monthInfo, idx) => {
+    if (idx > 0 && idx % monthsPerPage === 0) pdf.addPage('a4', 'landscape');
+    if (idx % monthsPerPage === 0) {
+      drawLandscapeCalendarHeader(pdf, senaiLogoDataUrl);
+      drawLandscapeCalendarFooter(pdf, marginX, pageHeight - 4);
+    }
+    const slot = idx % monthsPerPage;
+    const row = Math.floor(slot / cols);
+    const col = slot % cols;
+    const x = marginX + col * (cardW + gapX);
+    const y = gridTop + row * (cardH + gapY);
+    drawMonthCalendarPdfCompact(pdf, monthInfo, x, y, cardW, cardH);
+  });
+}
+
+function drawLandscapeCalendarHeader(pdf, logoDataUrl) {
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  pdf.setFillColor(255, 255, 255);
+  pdf.rect(0, 0, pageWidth, 16, 'F');
+  if (logoDataUrl) {
+    pdf.addImage(logoDataUrl, 'PNG', 8, 3, 44, 10);
+  }
+  pdf.setTextColor(17, 24, 39);
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(14);
+  pdf.text('Calendario da Fase Pratica', pageWidth / 2, 7.5, { align: 'center' });
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(8.5);
+  const periodStart = state.phaseDays[0] ? formatDateBR(state.phaseDays[0]) : '--';
+  const periodEnd = state.endDate ? formatDateBR(state.endDate) : '--';
+  pdf.text(`${periodStart} ate ${periodEnd}`, pageWidth / 2, 12, { align: 'center' });
+  pdf.setDrawColor(209, 213, 219);
+  pdf.line(8, 15, pageWidth - 8, 15);
+}
+
+function drawLandscapeCalendarFooter(pdf, x, y) {
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(7.5);
+  pdf.setTextColor(100, 116, 139);
+  pdf.text('Desenvolvido por Paulo da Silva Filho - Especialista em TI - GEP - BAHIA - 2026', x, y);
+}
+
+function drawMonthCalendarPdfCompact(pdf, monthInfo, x, y, width, height) {
+  const year = monthInfo.year;
+  const month = monthInfo.month;
+  const first = new Date(year, month, 1);
+  const last = new Date(year, month + 1, 0);
+  const daysInMonth = last.getDate();
+  const startOffset = first.getDay();
+  const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+  const monthlyCount = state.phaseDays.filter((date) => date.startsWith(monthPrefix)).length;
+
+  const headerH = 8;
+  const metaH = 5;
+  const weekdayH = 5;
+  const legendH = 0;
+  const gridTop = y + headerH + metaH;
+  const gridHeight = height - headerH - metaH - legendH - 2;
+  const cellW = width / 7;
+  const cellH = gridHeight / 7;
+
+  pdf.setDrawColor(180, 188, 201);
+  pdf.setFillColor(255, 255, 255);
+  pdf.roundedRect(x, y, width, height, 2, 2, 'FD');
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(10);
+  pdf.setTextColor(17, 24, 39);
+  pdf.text(`${monthNames[month]} ${year}`, x + 2.5, y + 5.2);
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(7);
+  pdf.setTextColor(100, 116, 139);
+  pdf.text(`Dias de pratica: ${monthlyCount}`, x + 2.5, y + 10);
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(6.8);
+  weekdayNames.forEach((name, idx) => {
+    const cellX = x + idx * cellW;
+    pdf.setFillColor(241, 245, 249);
+    pdf.rect(cellX, gridTop, cellW, weekdayH, 'F');
+    pdf.setDrawColor(220, 225, 233);
+    pdf.rect(cellX, gridTop, cellW, weekdayH);
+    pdf.setTextColor(71, 85, 105);
+    pdf.text(name, cellX + cellW / 2, gridTop + 3.4, { align: 'center' });
+  });
+
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(6.3);
+  let index = 0;
+  for (let row = 0; row < 6; row += 1) {
+    for (let col = 0; col < 7; col += 1) {
+      const cellX = x + (col * cellW);
+      const cellY = gridTop + weekdayH + (row * cellH);
+      const dayNumber = index - startOffset + 1;
+      const inMonth = dayNumber >= 1 && dayNumber <= daysInMonth;
+
+      pdf.setDrawColor(225, 229, 236);
+      pdf.setFillColor(255, 255, 255);
+
+      if (inMonth) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNumber).padStart(2, '0')}`;
+        const block = findBlockForDate(dateStr);
+        const isPhase = state.phaseDays.includes(dateStr);
+        const dayOfWeek = new Date(`${dateStr}T00:00:00`).getDay();
+        if (block) {
+          const color = pdfBlockFillColor(block.type);
+          pdf.setFillColor(color[0], color[1], color[2]);
+        } else if (isPhase) {
+          pdf.setFillColor(220, 252, 231);
+        } else if (dayOfWeek === 0 || dayOfWeek === 6) {
+          pdf.setFillColor(248, 250, 252);
+        }
+      } else {
+        pdf.setFillColor(248, 250, 252);
+      }
+      pdf.rect(cellX, cellY, cellW, cellH, 'FD');
+
+      if (inMonth) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNumber).padStart(2, '0')}`;
+        const block = findBlockForDate(dateStr);
+        const isPhase = state.phaseDays.includes(dateStr);
+        const dayOfWeek = new Date(`${dateStr}T00:00:00`).getDay();
+
+        pdf.setTextColor(17, 24, 39);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text(String(dayNumber).padStart(2, '0'), cellX + 1.4, cellY + 3.2);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(5.4);
+        if (block) {
+          pdf.setTextColor(83, 88, 98);
+          const status = shortBlockLabel(block.type);
+          pdf.text(status, cellX + cellW / 2, cellY + cellH - 1.2, { align: 'center' });
+        } else if (isPhase) {
+          pdf.setTextColor(22, 101, 52);
+          pdf.text('Pratica', cellX + cellW / 2, cellY + cellH - 1.2, { align: 'center' });
+        } else if (dayOfWeek === 0 || dayOfWeek === 6) {
+          pdf.setTextColor(148, 163, 184);
+          pdf.text('Fim de semana', cellX + cellW / 2, cellY + cellH - 1.2, { align: 'center' });
+        }
+        pdf.setFontSize(6.3);
+      }
+      index += 1;
+    }
+  }
+}
+
+function shortBlockLabel(type) {
+  return {
+    holiday: 'Feriado',
+    recess: 'Recesso',
+    'admin-leave': 'Folga',
+    training: 'Acao',
+  }[type] || 'Bloq.';
 }
 
 function drawPdfCover(pdf, margin, contentWidth, y, senaiLogoDataUrl) {
@@ -880,29 +1047,10 @@ function drawPdfMonthlySummary(pdf, margin, contentWidth, y, pageHeight, senaiLo
 }
 
 function drawPdfBlocks(pdf, margin, contentWidth, y, pageHeight, senaiLogoDataUrl) {
-  const topY = 24;
-  const lineHeight = 5;
-  const sectionBottomPadding = 6;
-
   if (y > pageHeight - 40) {
     pdf.addPage();
-    drawPdfPageHeader(pdf, 'Resumo da fase pratica', senaiLogoDataUrl);
-    y = topY;
+    y = margin;
   }
-
-  const startNewPage = () => {
-    pdf.addPage();
-    drawPdfPageHeader(pdf, 'Resumo da fase pratica', senaiLogoDataUrl);
-    pdf.setTextColor(17, 24, 39);
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(15);
-    y = topY;
-    pdf.text('Bloqueios cadastrados', margin, y);
-    y += 8;
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(10);
-  };
-
   pdf.setTextColor(17, 24, 39);
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(15);
@@ -920,20 +1068,16 @@ function drawPdfBlocks(pdf, margin, contentWidth, y, pageHeight, senaiLogoDataUr
   displayBlocks.forEach((block) => {
     const line = `${block.description} - ${friendlyBlockType(block.type)} (${formatDateBR(block.start)} ate ${formatDateBR(block.end)})`;
     const lines = pdf.splitTextToSize(line, contentWidth - 6);
-    const neededHeight = (lines.length * lineHeight) + 2;
-
+    const neededHeight = (lines.length * 5) + 3;
     if (y + neededHeight > pageHeight - margin) {
-      startNewPage();
+      pdf.addPage();
+      drawPdfPageHeader(pdf, 'Resumo da fase pratica', senaiLogoDataUrl);
+      y = 24;
     }
-
-    pdf.setTextColor(17, 24, 39);
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(10);
     pdf.text(lines, margin, y);
     y += neededHeight;
   });
-
-  return y + sectionBottomPadding;
+  return y + 6;
 }
 
 function appendCalendarPages(pdf, margin, contentWidth, pageHeight, senaiLogoDataUrl) {
