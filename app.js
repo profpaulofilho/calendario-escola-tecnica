@@ -18,9 +18,50 @@ const state = {
 };
 
 const els = {};
-
+const STORAGE_KEY = 'fase-pratica-app-state';
 
 let senaiLogoDataUrlPromise = null;
+
+function storageAvailable() {
+  try {
+    const probe = '__fase_pratica_probe__';
+    window.localStorage.setItem(probe, '1');
+    window.localStorage.removeItem(probe);
+    return true;
+  } catch (error) {
+    console.error('LocalStorage indisponivel.', error);
+    return false;
+  }
+}
+
+function readStoredState() {
+  if (!storageAvailable()) return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    console.error('Falha ao ler dados salvos.', error);
+    return null;
+  }
+}
+
+function persistStoredState(payload) {
+  if (!storageAvailable()) return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.error('Falha ao salvar dados.', error);
+  }
+}
+
+function clearStoredState() {
+  if (!storageAvailable()) return;
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch (error) {
+    console.error('Falha ao limpar dados salvos.', error);
+  }
+}
 
 function getSenaiLogoDataUrl() {
   if (!senaiLogoDataUrlPromise) {
@@ -46,13 +87,21 @@ document.addEventListener('DOMContentLoaded', () => {
   bindEvents();
   loadTheme();
   loadUiMode();
+  loadAppData();
   setDefaultStartDate();
   renderLegend();
   renderMonthlyQuotaInputs();
   refreshBlockList();
   applyUiMode();
   updateQuotaPanelVisibility();
+  restoreGeneratedResults();
   updateSummary();
+  enableAutoSave();
+  saveAppData();
+  window.addEventListener('beforeunload', saveAppData);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveAppData();
+  });
 });
 
 function bindElements() {
@@ -77,6 +126,71 @@ function bindEvents() {
   document.querySelectorAll('.tab').forEach((button) => {
     button.addEventListener('click', () => switchTab(button.dataset.tab));
   });
+}
+
+
+function enableAutoSave() {
+  const watchedFields = [
+    els.fillerName, els.clientName, els.unitName, els.startDate,
+    els.hoursPerDay, els.totalHours, els.calculationMode,
+    els.blockType, els.blockDescription, els.blockStart, els.blockEnd
+  ];
+
+  watchedFields.forEach((field) => {
+    if (!field) return;
+    field.addEventListener('input', saveAppData);
+    field.addEventListener('change', saveAppData);
+  });
+}
+
+function saveAppData() {
+  const payload = {
+    fillerName: els.fillerName.value || '',
+    clientName: els.clientName.value || '',
+    unitName: els.unitName.value || '',
+    startDate: els.startDate.value || '',
+    hoursPerDay: els.hoursPerDay.value || '',
+    totalHours: els.totalHours.value || '',
+    calculationMode: els.calculationMode.value || 'automatic',
+    uiMode: state.uiMode || 'simple',
+    blocks: Array.isArray(state.blocks) ? state.blocks : [],
+    monthlyQuotas: state.monthlyQuotas || {},
+    phaseDays: Array.isArray(state.phaseDays) ? state.phaseDays : [],
+    reportRows: Array.isArray(state.reportRows) ? state.reportRows : [],
+    endDate: state.endDate || null,
+  };
+  persistStoredState(payload);
+}
+
+function loadAppData() {
+  const payload = readStoredState();
+  if (!payload) return;
+
+  els.fillerName.value = payload.fillerName || '';
+  els.clientName.value = payload.clientName || '';
+  els.unitName.value = payload.unitName || '';
+  if (payload.startDate) els.startDate.value = payload.startDate;
+  if (payload.hoursPerDay !== undefined && payload.hoursPerDay !== '') els.hoursPerDay.value = payload.hoursPerDay;
+  if (payload.totalHours !== undefined && payload.totalHours !== '') els.totalHours.value = payload.totalHours;
+  if (payload.calculationMode) els.calculationMode.value = payload.calculationMode;
+  if (payload.uiMode === 'simple' || payload.uiMode === 'advanced') {
+    state.uiMode = payload.uiMode;
+    try { window.localStorage.setItem('fase-pratica-ui-mode', state.uiMode); } catch (error) { console.error(error); }
+  }
+
+  state.blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
+  state.monthlyQuotas = payload.monthlyQuotas && typeof payload.monthlyQuotas === 'object' ? payload.monthlyQuotas : {};
+  state.phaseDays = Array.isArray(payload.phaseDays) ? payload.phaseDays : [];
+  state.reportRows = Array.isArray(payload.reportRows) ? payload.reportRows : [];
+  state.endDate = payload.endDate || null;
+}
+
+function restoreGeneratedResults() {
+  if (!state.phaseDays.length || !state.endDate) return;
+  const hoursPerDay = Number(els.hoursPerDay.value || 0);
+  const totalHours = Number(els.totalHours.value || 0);
+  renderCalendar();
+  renderReport(hoursPerDay, totalHours, els.calculationMode.value);
 }
 
 function loadTheme() {
@@ -106,6 +220,7 @@ function toggleUiMode() {
   state.uiMode = state.uiMode === 'simple' ? 'advanced' : 'simple';
   localStorage.setItem('fase-pratica-ui-mode', state.uiMode);
   applyUiMode();
+  saveAppData();
 }
 
 function applyUiMode() {
@@ -159,6 +274,7 @@ function renderMonthlyQuotaInputs() {
     input.addEventListener('input', () => {
       const raw = input.value.trim();
       state.monthlyQuotas[input.dataset.quotaKey] = raw === '' ? '' : Number(raw);
+      saveAppData();
     });
   });
 }
@@ -188,11 +304,13 @@ function addBlock() {
   els.blockStart.value = '';
   els.blockEnd.value = '';
   refreshBlockList();
+  saveAppData();
 }
 
 function removeBlock(index) {
   state.blocks.splice(index, 1);
   refreshBlockList();
+  saveAppData();
 }
 
 function refreshBlockList() {
@@ -253,6 +371,7 @@ function generateSchedule() {
   renderReport(hoursPerDay, totalHours, mode);
   updateSummary(hoursPerDay, totalHours);
   switchTab('calendar');
+  saveAppData();
 }
 
 function calculateAutomaticDays(startDate, totalHours, hoursPerDay) {
@@ -464,6 +583,7 @@ async function exportPdf() {
   }
 
   const originalText = els.btnExportPdf.textContent;
+  saveAppData();
   els.btnExportPdf.disabled = true;
   els.btnExportPdf.textContent = 'Gerando PDF...';
 
@@ -844,6 +964,8 @@ function drawDetailBox(pdf, x, y, width, title, rows) {
 }
 
 function resetAll() {
+  if (!confirm('Deseja limpar os dados salvos da ficha?')) return;
+
   state.blocks = [];
   state.monthlyQuotas = {};
   state.phaseDays = [];
@@ -868,6 +990,7 @@ function resetAll() {
   els.calendarMount.innerHTML = 'Preencha os dados e clique em <strong>Gerar calendario</strong>.';
   els.reportMount.className = 'report-box empty-state';
   els.reportMount.textContent = 'O resumo do contrato sera exibido aqui.';
+  clearStoredState();
   updateSummary();
 }
 
