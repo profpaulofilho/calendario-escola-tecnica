@@ -80,9 +80,26 @@
           </label>
         </div>
 
+        <section class="subpanel">
+          <div>
+            <strong>2. Feriados automáticos</strong>
+            <small>Carrega feriados nacionais automaticamente pela BrasilAPI.</small>
+          </div>
+
+          <div class="inline-toggle spacing-top">
+            <label class="check-inline">
+              <input id="autoHolidaysEnabled" type="checkbox" checked />
+              <span>Considerar feriados nacionais automaticamente</span>
+            </label>
+            <button class="secondary-btn" id="btnRefreshHolidays" type="button">Atualizar feriados</button>
+          </div>
+
+          <div id="holidayStatus" class="helper-text spacing-top">Os feriados nacionais serão carregados ao gerar o calendário.</div>
+        </section>
+
         <section class="subpanel" open>
           <div>
-            <strong>2. Bloqueios</strong>
+            <strong>3. Bloqueios</strong>
             <small>Cadastre feriados, recessos ou outras pausas.</small>
           </div>
 
@@ -119,7 +136,7 @@
 
         <section class="subpanel advanced-only" id="quotaPanel">
           <div>
-            <strong>3. Calendário personalizado por mês</strong>
+            <strong>4. Calendário personalizado por mês</strong>
             <small>Use quando já houver quantidade de dias definida em cada mês.</small>
           </div>
           <p class="helper-text spacing-top">Preencha apenas os meses que terão dias de prática.</p>
@@ -127,7 +144,7 @@
         </section>
 
         <section class="subpanel guide-panel">
-          <h3>4. Como usar</h3>
+          <h3>5. Como usar</h3>
           <ol class="guide-list">
             <li>Preencha os dados principais.</li>
             <li>Cadastre os bloqueios quando houver.</li>

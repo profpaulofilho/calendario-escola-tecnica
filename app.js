@@ -11,6 +11,9 @@ const legendItems = [
 const state = {
   uiMode: 'simple',
   blocks: [],
+  autoHolidaysEnabled: true,
+  autoHolidayBlocks: [],
+  holidayYearsLoaded: [],
   monthlyQuotas: {},
   phaseDays: [],
   reportRows: [],
@@ -95,6 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
   applyUiMode();
   updateQuotaPanelVisibility();
   restoreGeneratedResults();
+  updateHolidayStatus();
   updateSummary();
   enableAutoSave();
   saveAppData();
@@ -110,16 +114,18 @@ function bindElements() {
     'blockType', 'blockDescription', 'blockStart', 'blockEnd', 'blockList', 'monthlyQuotaContainer',
     'btnAddBlock', 'btnGenerate', 'btnReset', 'btnExportPdf', 'calendarLegend', 'calendarMount',
     'reportMount', 'sumPhaseDays', 'sumHoursPerDay', 'sumTotalHours', 'sumEndDate', 'heroTotalDias',
-    'heroDataFim', 'themeToggle', 'quotaPanel', 'modeToggle'
+    'heroDataFim', 'themeToggle', 'quotaPanel', 'modeToggle', 'autoHolidaysEnabled', 'btnRefreshHolidays', 'holidayStatus'
   ].forEach((id) => { els[id] = document.getElementById(id); });
 }
 
 function bindEvents() {
   els.btnAddBlock.addEventListener('click', addBlock);
   els.btnGenerate.addEventListener('click', generateSchedule);
+  els.btnRefreshHolidays.addEventListener('click', () => refreshAutomaticHolidays(true));
   els.btnReset.addEventListener('click', resetAll);
   els.btnExportPdf.addEventListener('click', exportPdf);
   els.calculationMode.addEventListener('change', updateQuotaPanelVisibility);
+  els.autoHolidaysEnabled.addEventListener('change', handleAutoHolidaysToggle);
   els.themeToggle.addEventListener('click', toggleTheme);
   els.modeToggle.addEventListener('click', toggleUiMode);
   els.startDate.addEventListener('change', renderMonthlyQuotaInputs);
@@ -132,7 +138,7 @@ function bindEvents() {
 function enableAutoSave() {
   const watchedFields = [
     els.fillerName, els.clientName, els.unitName, els.startDate,
-    els.hoursPerDay, els.totalHours, els.calculationMode,
+    els.hoursPerDay, els.totalHours, els.calculationMode, els.autoHolidaysEnabled,
     els.blockType, els.blockDescription, els.blockStart, els.blockEnd
   ];
 
@@ -153,7 +159,10 @@ function saveAppData() {
     totalHours: els.totalHours.value || '',
     calculationMode: els.calculationMode.value || 'automatic',
     uiMode: state.uiMode || 'simple',
+    autoHolidaysEnabled: !!els.autoHolidaysEnabled.checked,
     blocks: Array.isArray(state.blocks) ? state.blocks : [],
+    autoHolidayBlocks: Array.isArray(state.autoHolidayBlocks) ? state.autoHolidayBlocks : [],
+    holidayYearsLoaded: Array.isArray(state.holidayYearsLoaded) ? state.holidayYearsLoaded : [],
     monthlyQuotas: state.monthlyQuotas || {},
     phaseDays: Array.isArray(state.phaseDays) ? state.phaseDays : [],
     reportRows: Array.isArray(state.reportRows) ? state.reportRows : [],
@@ -173,12 +182,16 @@ function loadAppData() {
   if (payload.hoursPerDay !== undefined && payload.hoursPerDay !== '') els.hoursPerDay.value = payload.hoursPerDay;
   if (payload.totalHours !== undefined && payload.totalHours !== '') els.totalHours.value = payload.totalHours;
   if (payload.calculationMode) els.calculationMode.value = payload.calculationMode;
+  els.autoHolidaysEnabled.checked = payload.autoHolidaysEnabled !== false;
   if (payload.uiMode === 'simple' || payload.uiMode === 'advanced') {
     state.uiMode = payload.uiMode;
     try { window.localStorage.setItem('fase-pratica-ui-mode', state.uiMode); } catch (error) { console.error(error); }
   }
 
   state.blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
+  state.autoHolidaysEnabled = payload.autoHolidaysEnabled !== false;
+  state.autoHolidayBlocks = Array.isArray(payload.autoHolidayBlocks) ? payload.autoHolidayBlocks : [];
+  state.holidayYearsLoaded = Array.isArray(payload.holidayYearsLoaded) ? payload.holidayYearsLoaded : [];
   state.monthlyQuotas = payload.monthlyQuotas && typeof payload.monthlyQuotas === 'object' ? payload.monthlyQuotas : {};
   state.phaseDays = Array.isArray(payload.phaseDays) ? payload.phaseDays : [];
   state.reportRows = Array.isArray(payload.reportRows) ? payload.reportRows : [];
@@ -279,6 +292,98 @@ function renderMonthlyQuotaInputs() {
   });
 }
 
+async function refreshAutomaticHolidays(forceReload = false) {
+  try {
+    await ensureAutomaticHolidays(forceReload);
+    if (state.phaseDays.length) {
+      renderCalendar();
+      renderReport(Number(els.hoursPerDay.value || 0), Number(els.totalHours.value || 0), els.calculationMode.value);
+    }
+    alert('Feriados nacionais atualizados com sucesso.');
+  } catch (error) {
+    alert(`Nao foi possivel atualizar os feriados automaticos: ${error.message}`);
+  }
+}
+
+function handleAutoHolidaysToggle() {
+  state.autoHolidaysEnabled = !!els.autoHolidaysEnabled.checked;
+  updateHolidayStatus();
+  if (state.phaseDays.length) {
+    renderCalendar();
+    renderReport(Number(els.hoursPerDay.value || 0), Number(els.totalHours.value || 0), els.calculationMode.value);
+  }
+  saveAppData();
+}
+
+function getHolidayYearsNeeded() {
+  const years = new Set();
+  const startYear = new Date(`${els.startDate.value || fmtDate(new Date())}T00:00:00`).getFullYear();
+  years.add(startYear);
+  years.add(startYear + 1);
+  years.add(startYear + 2);
+  years.add(startYear + 3);
+  Object.keys(state.monthlyQuotas || {}).forEach((key) => years.add(Number(key.slice(0, 4))));
+  if (state.endDate) years.add(Number(state.endDate.slice(0, 4)));
+  return Array.from(years).filter((year) => Number.isFinite(year)).sort((a, b) => a - b);
+}
+
+async function ensureAutomaticHolidays(forceReload = false) {
+  state.autoHolidaysEnabled = !!els.autoHolidaysEnabled.checked;
+  if (!state.autoHolidaysEnabled) {
+    updateHolidayStatus();
+    saveAppData();
+    return;
+  }
+
+  const targetYears = getHolidayYearsNeeded();
+  const yearsToFetch = forceReload ? targetYears : targetYears.filter((year) => !state.holidayYearsLoaded.includes(year));
+  if (!yearsToFetch.length) {
+    updateHolidayStatus();
+    return;
+  }
+
+  els.holidayStatus.textContent = 'Carregando feriados nacionais...';
+  const preserved = forceReload ? [] : state.autoHolidayBlocks.filter((block) => !yearsToFetch.includes(Number(block.start.slice(0, 4))));
+  const fetched = [];
+
+  for (const year of yearsToFetch) {
+    const response = await fetch(`https://brasilapi.com.br/api/feriados/v1/${year}`);
+    if (!response.ok) {
+      throw new Error(`falha ao consultar os feriados de ${year}`);
+    }
+    const data = await response.json();
+    data
+      .filter((item) => item.type === 'national')
+      .forEach((item) => fetched.push({
+        type: 'holiday',
+        description: item.name,
+        start: item.date,
+        end: item.date,
+        source: 'auto',
+      }));
+  }
+
+  state.autoHolidayBlocks = [...preserved, ...fetched].sort((a, b) => a.start.localeCompare(b.start));
+  state.holidayYearsLoaded = Array.from(new Set([...state.holidayYearsLoaded.filter((year) => !yearsToFetch.includes(year)), ...yearsToFetch])).sort((a, b) => a - b);
+  updateHolidayStatus();
+  saveAppData();
+}
+
+function updateHolidayStatus() {
+  if (!els.holidayStatus) return;
+  if (!state.autoHolidaysEnabled) {
+    els.holidayStatus.textContent = 'Os feriados nacionais automáticos estão desativados.';
+    return;
+  }
+  const total = state.autoHolidayBlocks.length;
+  if (!total) {
+    els.holidayStatus.textContent = 'Os feriados nacionais serão carregados ao gerar o calendário.';
+    return;
+  }
+  const years = state.holidayYearsLoaded.join(', ');
+  els.holidayStatus.textContent = `${total} feriado(s) nacional(is) carregado(s) para ${years}.`;
+}
+
 function addBlock() {
   const start = els.blockStart.value;
   if (!start) {
@@ -300,6 +405,7 @@ function addBlock() {
   });
   state.blocks.sort((a, b) => a.start.localeCompare(b.start));
 
+  els.autoHolidaysEnabled.checked = true;
   els.blockDescription.value = '';
   els.blockStart.value = '';
   els.blockEnd.value = '';
@@ -336,7 +442,7 @@ function refreshBlockList() {
   });
 }
 
-function generateSchedule() {
+async function generateSchedule() {
   const startDate = els.startDate.value;
   const hoursPerDay = Number(els.hoursPerDay.value || 0);
   const totalHours = Number(els.totalHours.value || 0);
@@ -350,6 +456,8 @@ function generateSchedule() {
     alert('Informe horas por dia e carga horaria total maiores que zero.');
     return;
   }
+
+  await ensureAutomaticHolidays();
 
   let phaseDays = [];
   if (mode === 'monthly-quota') {
@@ -439,7 +547,12 @@ function isValidPracticeDay(date) {
 }
 
 function findBlockForDate(dateStr) {
-  return state.blocks.find((block) => dateStr >= block.start && dateStr <= block.end) || null;
+  return getAllBlocks().find((block) => dateStr >= block.start && dateStr <= block.end) || null;
+}
+
+function getAllBlocks() {
+  if (!state.autoHolidaysEnabled) return [...state.blocks];
+  return [...state.blocks, ...state.autoHolidayBlocks.filter((autoBlock) => !state.blocks.some((manual) => autoBlock.start >= manual.start && autoBlock.start <= manual.end))];
 }
 
 function renderCalendar() {
@@ -505,8 +618,9 @@ function renderReport(hoursPerDay, totalHours, mode) {
   const rows = state.reportRows.map((row) => `
     <tr><td>${escapeHtml(row.month)}</td><td>${row.days}</td><td>${row.hours}</td></tr>
   `).join('');
-  const blocksHtml = state.blocks.length
-    ? `<ul>${state.blocks.map((block) => `<li>${escapeHtml(block.description)} - ${friendlyBlockType(block.type)} (${formatDateBR(block.start)} ate ${formatDateBR(block.end)})</li>`).join('')}</ul>`
+  const reportBlocks = getAllBlocks();
+  const blocksHtml = reportBlocks.length
+    ? `<ul>${reportBlocks.map((block) => `<li>${escapeHtml(block.description)} - ${friendlyBlockType(block.type)} (${formatDateBR(block.start)} ate ${formatDateBR(block.end)})${block.source === 'auto' ? ' [automatico]' : ''}</li>`).join('')}</ul>`
     : '<p>Nenhum bloqueio cadastrado.</p>';
 
   els.reportMount.className = 'report-box';
@@ -602,7 +716,7 @@ async function exportPdf() {
     y = margin;
     drawPdfPageHeader(pdf, 'Resumo da fase pratica', senaiLogoDataUrl);
     y = 24;
-    y = drawPdfMonthlySummary(pdf, margin, contentWidth, y, pageHeight);
+    y = drawPdfMonthlySummary(pdf, margin, contentWidth, y, pageHeight, senaiLogoDataUrl);
     y = drawPdfBlocks(pdf, margin, contentWidth, y, pageHeight, senaiLogoDataUrl);
     appendCalendarPages(pdf, margin, contentWidth, pageHeight, senaiLogoDataUrl);
 
@@ -699,7 +813,7 @@ function drawPdfPageHeader(pdf, title, logoDataUrl) {
   pdf.line(12, 18, pageWidth - 12, 18);
 }
 
-function drawPdfMonthlySummary(pdf, margin, contentWidth, y, pageHeight) {
+function drawPdfMonthlySummary(pdf, margin, contentWidth, y, pageHeight, senaiLogoDataUrl) {
   pdf.setTextColor(17, 24, 39);
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(15);
@@ -755,13 +869,14 @@ function drawPdfBlocks(pdf, margin, contentWidth, y, pageHeight, senaiLogoDataUr
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(10);
 
-  if (!state.blocks.length) {
+  const reportBlocks = getAllBlocks();
+  if (!reportBlocks.length) {
     pdf.text('Nenhum bloqueio cadastrado.', margin, y);
     return y + 8;
   }
 
-  state.blocks.forEach((block) => {
-    const line = `${block.description} - ${friendlyBlockType(block.type)} (${formatDateBR(block.start)} ate ${formatDateBR(block.end)})`;
+  reportBlocks.forEach((block) => {
+    const line = `${block.description} - ${friendlyBlockType(block.type)} (${formatDateBR(block.start)} ate ${formatDateBR(block.end)})${block.source === 'auto' ? ' [automatico]' : ''}`;
     const lines = pdf.splitTextToSize(line, contentWidth - 6);
     const neededHeight = (lines.length * 5) + 3;
     if (y + neededHeight > pageHeight - margin) {
@@ -967,6 +1082,9 @@ function resetAll() {
   if (!confirm('Deseja limpar os dados salvos da ficha?')) return;
 
   state.blocks = [];
+  state.autoHolidaysEnabled = true;
+  state.autoHolidayBlocks = [];
+  state.holidayYearsLoaded = [];
   state.monthlyQuotas = {};
   state.phaseDays = [];
   state.reportRows = [];
@@ -978,6 +1096,7 @@ function resetAll() {
   els.hoursPerDay.value = 4;
   els.totalHours.value = 200;
   els.calculationMode.value = 'automatic';
+  els.autoHolidaysEnabled.checked = true;
   els.blockDescription.value = '';
   els.blockStart.value = '';
   els.blockEnd.value = '';
@@ -991,8 +1110,10 @@ function resetAll() {
   els.reportMount.className = 'report-box empty-state';
   els.reportMount.textContent = 'O resumo do contrato sera exibido aqui.';
   clearStoredState();
+  updateHolidayStatus();
   updateSummary();
 }
+
 
 function switchTab(tabName) {
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === tabName));

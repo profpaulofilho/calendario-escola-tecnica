@@ -186,6 +186,24 @@ h1 {
 }
 .subpanel summary small, .helper-text { color: var(--muted); }
 .spacing-top { margin-top: 14px; }
+
+.inline-toggle {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.check-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+}
+.check-inline input {
+  width: auto;
+  transform: scale(1.15);
+}
+
 .inline-actions, .actions, .tabs {
   display: flex;
   align-items: center;
