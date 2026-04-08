@@ -18,7 +18,7 @@ const state = {
 };
 
 const els = {};
-const STORAGE_KEY = 'fase-pratica-form-data';
+
 
 let senaiLogoDataUrlPromise = null;
 
@@ -47,15 +47,12 @@ document.addEventListener('DOMContentLoaded', () => {
   loadTheme();
   loadUiMode();
   setDefaultStartDate();
-  loadAppData();
   renderLegend();
   renderMonthlyQuotaInputs();
   refreshBlockList();
   applyUiMode();
   updateQuotaPanelVisibility();
-  restoreGeneratedResults();
   updateSummary();
-  enableAutoSave();
 });
 
 function bindElements() {
@@ -80,72 +77,6 @@ function bindEvents() {
   document.querySelectorAll('.tab').forEach((button) => {
     button.addEventListener('click', () => switchTab(button.dataset.tab));
   });
-}
-
-function enableAutoSave() {
-  [
-    els.fillerName, els.clientName, els.unitName, els.startDate,
-    els.hoursPerDay, els.totalHours, els.calculationMode,
-    els.blockType, els.blockDescription, els.blockStart, els.blockEnd
-  ].forEach((field) => {
-    field.addEventListener('input', saveAppData);
-    field.addEventListener('change', saveAppData);
-  });
-}
-
-function saveAppData() {
-  const payload = {
-    fillerName: els.fillerName.value || '',
-    clientName: els.clientName.value || '',
-    unitName: els.unitName.value || '',
-    startDate: els.startDate.value || '',
-    hoursPerDay: els.hoursPerDay.value || '',
-    totalHours: els.totalHours.value || '',
-    calculationMode: els.calculationMode.value || 'automatic',
-    uiMode: state.uiMode,
-    blocks: state.blocks,
-    monthlyQuotas: state.monthlyQuotas,
-    phaseDays: state.phaseDays,
-    reportRows: state.reportRows,
-    endDate: state.endDate,
-  };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-}
-
-function loadAppData() {
-  let payload = null;
-  try {
-    payload = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-  } catch (error) {
-    payload = null;
-  }
-  if (!payload) return;
-
-  els.fillerName.value = payload.fillerName || '';
-  els.clientName.value = payload.clientName || '';
-  els.unitName.value = payload.unitName || '';
-  if (payload.startDate) els.startDate.value = payload.startDate;
-  if (payload.hoursPerDay !== undefined && payload.hoursPerDay !== '') els.hoursPerDay.value = payload.hoursPerDay;
-  if (payload.totalHours !== undefined && payload.totalHours !== '') els.totalHours.value = payload.totalHours;
-  if (payload.calculationMode) els.calculationMode.value = payload.calculationMode;
-  if (payload.uiMode === 'simple' || payload.uiMode === 'advanced') {
-    state.uiMode = payload.uiMode;
-    localStorage.setItem('fase-pratica-ui-mode', state.uiMode);
-  }
-
-  state.blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
-  state.monthlyQuotas = payload.monthlyQuotas && typeof payload.monthlyQuotas === 'object' ? payload.monthlyQuotas : {};
-  state.phaseDays = Array.isArray(payload.phaseDays) ? payload.phaseDays : [];
-  state.reportRows = Array.isArray(payload.reportRows) ? payload.reportRows : [];
-  state.endDate = payload.endDate || null;
-}
-
-function restoreGeneratedResults() {
-  if (!state.phaseDays.length || !state.endDate) return;
-  const hoursPerDay = Number(els.hoursPerDay.value || 0);
-  const totalHours = Number(els.totalHours.value || 0);
-  renderCalendar();
-  renderReport(hoursPerDay, totalHours, els.calculationMode.value);
 }
 
 function loadTheme() {
@@ -188,7 +119,6 @@ function applyUiMode() {
   }
   els.modeToggle.textContent = isAdvanced ? 'Modo simples' : 'Modo avançado';
   updateQuotaPanelVisibility();
-  saveAppData();
 }
 
 function setDefaultStartDate() {
@@ -229,7 +159,6 @@ function renderMonthlyQuotaInputs() {
     input.addEventListener('input', () => {
       const raw = input.value.trim();
       state.monthlyQuotas[input.dataset.quotaKey] = raw === '' ? '' : Number(raw);
-      saveAppData();
     });
   });
 }
@@ -259,13 +188,11 @@ function addBlock() {
   els.blockStart.value = '';
   els.blockEnd.value = '';
   refreshBlockList();
-  saveAppData();
 }
 
 function removeBlock(index) {
   state.blocks.splice(index, 1);
   refreshBlockList();
-  saveAppData();
 }
 
 function refreshBlockList() {
@@ -326,7 +253,6 @@ function generateSchedule() {
   renderReport(hoursPerDay, totalHours, mode);
   updateSummary(hoursPerDay, totalHours);
   switchTab('calendar');
-  saveAppData();
 }
 
 function calculateAutomaticDays(startDate, totalHours, hoursPerDay) {
@@ -918,8 +844,6 @@ function drawDetailBox(pdf, x, y, width, title, rows) {
 }
 
 function resetAll() {
-  if (!confirm('Deseja limpar os dados salvos da ficha?')) return;
-
   state.blocks = [];
   state.monthlyQuotas = {};
   state.phaseDays = [];
@@ -944,7 +868,6 @@ function resetAll() {
   els.calendarMount.innerHTML = 'Preencha os dados e clique em <strong>Gerar calendario</strong>.';
   els.reportMount.className = 'report-box empty-state';
   els.reportMount.textContent = 'O resumo do contrato sera exibido aqui.';
-  localStorage.removeItem(STORAGE_KEY);
   updateSummary();
 }
 
