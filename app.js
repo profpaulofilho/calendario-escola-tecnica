@@ -15,7 +15,7 @@ const state = {
   phaseDays: [],
   reportRows: [],
   endDate: null,
-  selectedWeekdays: [1, 2, 3, 4, 5],
+  selectedWeekdays: [0, 1, 2, 3, 4, 5, 6],
 };
 
 const els = {};
@@ -166,7 +166,7 @@ function saveAppData() {
     phaseDays: Array.isArray(state.phaseDays) ? state.phaseDays : [],
     reportRows: Array.isArray(state.reportRows) ? state.reportRows : [],
     endDate: state.endDate || null,
-    selectedWeekdays: Array.isArray(state.selectedWeekdays) ? state.selectedWeekdays : [1, 2, 3, 4, 5],
+    selectedWeekdays: Array.isArray(state.selectedWeekdays) ? state.selectedWeekdays : [0, 1, 2, 3, 4, 5, 6],
   };
   persistStoredState(payload);
 }
@@ -195,7 +195,7 @@ function loadAppData() {
   state.endDate = payload.endDate || null;
   state.selectedWeekdays = Array.isArray(payload.selectedWeekdays) && payload.selectedWeekdays.length
     ? payload.selectedWeekdays.map(Number).sort((a, b) => a - b)
-    : [1, 2, 3, 4, 5];
+    : [0, 1, 2, 3, 4, 5, 6];
   applySelectedWeekdaysToUi();
 }
 
@@ -208,7 +208,7 @@ function getSelectedWeekdays() {
 function applySelectedWeekdaysToUi() {
   const selected = Array.isArray(state.selectedWeekdays) && state.selectedWeekdays.length
     ? state.selectedWeekdays.map(Number)
-    : [1, 2, 3, 4, 5];
+    : [0, 1, 2, 3, 4, 5, 6];
   document.querySelectorAll('.weekday-check').forEach((input) => {
     input.checked = selected.includes(Number(input.value));
   });
@@ -218,7 +218,7 @@ function handleWeekdaySelectionChange(event) {
   const selected = getSelectedWeekdays();
   if (!selected.length) {
     event.target.checked = true;
-    alert('Selecione pelo menos um dia da semana para a prática.');
+    alert('Selecione pelo menos um dia da semana para a pratica.');
     return;
   }
   state.selectedWeekdays = selected;
@@ -226,10 +226,10 @@ function handleWeekdaySelectionChange(event) {
 }
 
 function formatSelectedWeekdays() {
-  const map = {1:'Seg.',2:'Ter.',3:'Qua.',4:'Qui.',5:'Sex.'};
+  const map = {0:'Dom.',1:'Seg.',2:'Ter.',3:'Qua.',4:'Qui.',5:'Sex.',6:'Sab.'};
   const selected = Array.isArray(state.selectedWeekdays) && state.selectedWeekdays.length
     ? state.selectedWeekdays
-    : [1, 2, 3, 4, 5];
+    : [0, 1, 2, 3, 4, 5, 6];
   return selected.map((d) => map[d]).filter(Boolean).join(', ');
 }
 
@@ -575,7 +575,7 @@ function calculateMonthlyQuotaDays(startDate, totalHours, hoursPerDay) {
 
 function isValidPracticeDay(date) {
   const day = date.getDay();
-  const selected = Array.isArray(state.selectedWeekdays) && state.selectedWeekdays.length ? state.selectedWeekdays : [1, 2, 3, 4, 5];
+  const selected = Array.isArray(state.selectedWeekdays) && state.selectedWeekdays.length ? state.selectedWeekdays : [0, 1, 2, 3, 4, 5, 6];
   if (!selected.includes(day)) return false;
   return !findBlockForDate(fmtDate(date));
 }
