@@ -11,9 +11,6 @@ const legendItems = [
 const state = {
   uiMode: 'simple',
   blocks: [],
-  autoHolidaysEnabled: true,
-  autoHolidayBlocks: [],
-  holidayYearsLoaded: [],
   monthlyQuotas: {},
   phaseDays: [],
   reportRows: [],
@@ -98,7 +95,6 @@ document.addEventListener('DOMContentLoaded', () => {
   applyUiMode();
   updateQuotaPanelVisibility();
   restoreGeneratedResults();
-  updateHolidayStatus();
   updateSummary();
   enableAutoSave();
   saveAppData();
@@ -114,20 +110,20 @@ function bindElements() {
     'blockType', 'blockDescription', 'blockStart', 'blockEnd', 'blockList', 'monthlyQuotaContainer',
     'btnAddBlock', 'btnGenerate', 'btnReset', 'btnExportPdf', 'calendarLegend', 'calendarMount',
     'reportMount', 'sumPhaseDays', 'sumHoursPerDay', 'sumTotalHours', 'sumEndDate', 'heroTotalDias',
-    'heroDataFim', 'themeToggle', 'quotaPanel', 'modeToggle', 'autoHolidaysEnabled', 'btnRefreshHolidays', 'holidayStatus'
+    'heroDataFim', 'themeToggle', 'quotaPanel', 'modeToggle', 'autoNationalHolidays', 'btnRefreshHolidays'
   ].forEach((id) => { els[id] = document.getElementById(id); });
 }
 
 function bindEvents() {
   els.btnAddBlock.addEventListener('click', addBlock);
   els.btnGenerate.addEventListener('click', generateSchedule);
-  els.btnRefreshHolidays.addEventListener('click', () => refreshAutomaticHolidays(true));
   els.btnReset.addEventListener('click', resetAll);
   els.btnExportPdf.addEventListener('click', exportPdf);
   els.calculationMode.addEventListener('change', updateQuotaPanelVisibility);
-  els.autoHolidaysEnabled.addEventListener('change', handleAutoHolidaysToggle);
   els.themeToggle.addEventListener('click', toggleTheme);
   els.modeToggle.addEventListener('click', toggleUiMode);
+  if (els.btnRefreshHolidays) els.btnRefreshHolidays.addEventListener('click', refreshAutomaticHolidays);
+  if (els.autoNationalHolidays) els.autoNationalHolidays.addEventListener('change', handleAutoHolidayToggle);
   els.startDate.addEventListener('change', renderMonthlyQuotaInputs);
   document.querySelectorAll('.tab').forEach((button) => {
     button.addEventListener('click', () => switchTab(button.dataset.tab));
@@ -138,7 +134,7 @@ function bindEvents() {
 function enableAutoSave() {
   const watchedFields = [
     els.fillerName, els.clientName, els.unitName, els.startDate,
-    els.hoursPerDay, els.totalHours, els.calculationMode, els.autoHolidaysEnabled,
+    els.hoursPerDay, els.totalHours, els.calculationMode, els.autoNationalHolidays,
     els.blockType, els.blockDescription, els.blockStart, els.blockEnd
   ];
 
@@ -158,11 +154,9 @@ function saveAppData() {
     hoursPerDay: els.hoursPerDay.value || '',
     totalHours: els.totalHours.value || '',
     calculationMode: els.calculationMode.value || 'automatic',
+    autoNationalHolidays: !!(els.autoNationalHolidays && els.autoNationalHolidays.checked),
     uiMode: state.uiMode || 'simple',
-    autoHolidaysEnabled: !!els.autoHolidaysEnabled.checked,
     blocks: Array.isArray(state.blocks) ? state.blocks : [],
-    autoHolidayBlocks: Array.isArray(state.autoHolidayBlocks) ? state.autoHolidayBlocks : [],
-    holidayYearsLoaded: Array.isArray(state.holidayYearsLoaded) ? state.holidayYearsLoaded : [],
     monthlyQuotas: state.monthlyQuotas || {},
     phaseDays: Array.isArray(state.phaseDays) ? state.phaseDays : [],
     reportRows: Array.isArray(state.reportRows) ? state.reportRows : [],
@@ -182,16 +176,13 @@ function loadAppData() {
   if (payload.hoursPerDay !== undefined && payload.hoursPerDay !== '') els.hoursPerDay.value = payload.hoursPerDay;
   if (payload.totalHours !== undefined && payload.totalHours !== '') els.totalHours.value = payload.totalHours;
   if (payload.calculationMode) els.calculationMode.value = payload.calculationMode;
-  els.autoHolidaysEnabled.checked = payload.autoHolidaysEnabled !== false;
+  if (els.autoNationalHolidays) els.autoNationalHolidays.checked = !!payload.autoNationalHolidays;
   if (payload.uiMode === 'simple' || payload.uiMode === 'advanced') {
     state.uiMode = payload.uiMode;
     try { window.localStorage.setItem('fase-pratica-ui-mode', state.uiMode); } catch (error) { console.error(error); }
   }
 
   state.blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
-  state.autoHolidaysEnabled = payload.autoHolidaysEnabled !== false;
-  state.autoHolidayBlocks = Array.isArray(payload.autoHolidayBlocks) ? payload.autoHolidayBlocks : [];
-  state.holidayYearsLoaded = Array.isArray(payload.holidayYearsLoaded) ? payload.holidayYearsLoaded : [];
   state.monthlyQuotas = payload.monthlyQuotas && typeof payload.monthlyQuotas === 'object' ? payload.monthlyQuotas : {};
   state.phaseDays = Array.isArray(payload.phaseDays) ? payload.phaseDays : [];
   state.reportRows = Array.isArray(payload.reportRows) ? payload.reportRows : [];
@@ -292,98 +283,6 @@ function renderMonthlyQuotaInputs() {
   });
 }
 
-async function refreshAutomaticHolidays(forceReload = false) {
-  try {
-    await ensureAutomaticHolidays(forceReload);
-    if (state.phaseDays.length) {
-      renderCalendar();
-      renderReport(Number(els.hoursPerDay.value || 0), Number(els.totalHours.value || 0), els.calculationMode.value);
-    }
-    alert('Feriados nacionais atualizados com sucesso.');
-  } catch (error) {
-    alert(`Nao foi possivel atualizar os feriados automaticos: ${error.message}`);
-  }
-}
-
-function handleAutoHolidaysToggle() {
-  state.autoHolidaysEnabled = !!els.autoHolidaysEnabled.checked;
-  updateHolidayStatus();
-  if (state.phaseDays.length) {
-    renderCalendar();
-    renderReport(Number(els.hoursPerDay.value || 0), Number(els.totalHours.value || 0), els.calculationMode.value);
-  }
-  saveAppData();
-}
-
-function getHolidayYearsNeeded() {
-  const years = new Set();
-  const startYear = new Date(`${els.startDate.value || fmtDate(new Date())}T00:00:00`).getFullYear();
-  years.add(startYear);
-  years.add(startYear + 1);
-  years.add(startYear + 2);
-  years.add(startYear + 3);
-  Object.keys(state.monthlyQuotas || {}).forEach((key) => years.add(Number(key.slice(0, 4))));
-  if (state.endDate) years.add(Number(state.endDate.slice(0, 4)));
-  return Array.from(years).filter((year) => Number.isFinite(year)).sort((a, b) => a - b);
-}
-
-async function ensureAutomaticHolidays(forceReload = false) {
-  state.autoHolidaysEnabled = !!els.autoHolidaysEnabled.checked;
-  if (!state.autoHolidaysEnabled) {
-    updateHolidayStatus();
-    saveAppData();
-    return;
-  }
-
-  const targetYears = getHolidayYearsNeeded();
-  const yearsToFetch = forceReload ? targetYears : targetYears.filter((year) => !state.holidayYearsLoaded.includes(year));
-  if (!yearsToFetch.length) {
-    updateHolidayStatus();
-    return;
-  }
-
-  els.holidayStatus.textContent = 'Carregando feriados nacionais...';
-  const preserved = forceReload ? [] : state.autoHolidayBlocks.filter((block) => !yearsToFetch.includes(Number(block.start.slice(0, 4))));
-  const fetched = [];
-
-  for (const year of yearsToFetch) {
-    const response = await fetch(`https://brasilapi.com.br/api/feriados/v1/${year}`);
-    if (!response.ok) {
-      throw new Error(`falha ao consultar os feriados de ${year}`);
-    }
-    const data = await response.json();
-    data
-      .filter((item) => item.type === 'national')
-      .forEach((item) => fetched.push({
-        type: 'holiday',
-        description: item.name,
-        start: item.date,
-        end: item.date,
-        source: 'auto',
-      }));
-  }
-
-  state.autoHolidayBlocks = [...preserved, ...fetched].sort((a, b) => a.start.localeCompare(b.start));
-  state.holidayYearsLoaded = Array.from(new Set([...state.holidayYearsLoaded.filter((year) => !yearsToFetch.includes(year)), ...yearsToFetch])).sort((a, b) => a - b);
-  updateHolidayStatus();
-  saveAppData();
-}
-
-function updateHolidayStatus() {
-  if (!els.holidayStatus) return;
-  if (!state.autoHolidaysEnabled) {
-    els.holidayStatus.textContent = 'Os feriados nacionais automáticos estão desativados.';
-    return;
-  }
-  const total = state.autoHolidayBlocks.length;
-  if (!total) {
-    els.holidayStatus.textContent = 'Os feriados nacionais serão carregados ao gerar o calendário.';
-    return;
-  }
-  const years = state.holidayYearsLoaded.join(', ');
-  els.holidayStatus.textContent = `${total} feriado(s) nacional(is) carregado(s) para ${years}.`;
-}
-
 function addBlock() {
   const start = els.blockStart.value;
   if (!start) {
@@ -405,7 +304,6 @@ function addBlock() {
   });
   state.blocks.sort((a, b) => a.start.localeCompare(b.start));
 
-  els.autoHolidaysEnabled.checked = true;
   els.blockDescription.value = '';
   els.blockStart.value = '';
   els.blockEnd.value = '';
@@ -430,16 +328,87 @@ function refreshBlockList() {
   els.blockList.innerHTML = state.blocks.map((block, index) => `
     <div class="block-item">
       <div class="block-meta">
-        <strong>${escapeHtml(block.description)}</strong>
+        <strong>${escapeHtml(block.description)}${block.automatic ? ' [automatico]' : ''}</strong>
         <small>${friendlyBlockType(block.type)} • ${formatDateBR(block.start)} ate ${formatDateBR(block.end)}</small>
       </div>
-      <button class="secondary-btn icon-btn" type="button" data-remove-block="${index}" aria-label="Remover bloqueio">✕</button>
+      ${block.automatic ? '' : `<button class="secondary-btn icon-btn" type="button" data-remove-block="${index}" aria-label="Remover bloqueio">✕</button>`}
     </div>
   `).join('');
 
   els.blockList.querySelectorAll('[data-remove-block]').forEach((button) => {
     button.addEventListener('click', () => removeBlock(Number(button.dataset.removeBlock)));
   });
+}
+
+
+function removeAutomaticBlocks() {
+  state.blocks = state.blocks.filter((block) => !block.automatic);
+  refreshBlockList();
+  saveAppData();
+}
+
+function handleAutoHolidayToggle() {
+  if (!els.autoNationalHolidays.checked) {
+    removeAutomaticBlocks();
+  }
+  saveAppData();
+}
+
+async function refreshAutomaticHolidays() {
+  const startDate = els.startDate.value;
+  const hoursPerDay = Number(els.hoursPerDay.value || 0);
+  const totalHours = Number(els.totalHours.value || 0);
+  if (!startDate) {
+    alert('Informe a data de inicio antes de atualizar os feriados.');
+    return;
+  }
+  if (!els.autoNationalHolidays.checked) {
+    els.autoNationalHolidays.checked = true;
+  }
+  await ensureAutomaticHolidays(startDate, totalHours || 200, hoursPerDay || 4, true);
+}
+
+async function ensureAutomaticHolidays(startDate, totalHours, hoursPerDay, notify = false) {
+  const requiredDays = Math.max(1, Math.ceil((totalHours || 1) / Math.max(hoursPerDay || 1, 1)));
+  const start = new Date(`${startDate}T00:00:00`);
+  const approxEnd = new Date(start);
+  approxEnd.setDate(approxEnd.getDate() + Math.max(requiredDays * 3, 370));
+  const years = [];
+  for (let y = start.getFullYear(); y <= approxEnd.getFullYear(); y += 1) years.push(y);
+  removeAutomaticBlocks();
+  try {
+    const fetched = [];
+    for (const year of years) {
+      const response = await fetch(`https://brasilapi.com.br/api/feriados/v1/${year}`);
+      if (!response.ok) throw new Error(`Falha ao consultar feriados de ${year}.`);
+      const data = await response.json();
+      data.forEach((item) => {
+        if (item && item.date) {
+          fetched.push({
+            type: 'holiday',
+            description: item.name || 'Feriado nacional',
+            start: item.date,
+            end: item.date,
+            automatic: true,
+          });
+        }
+      });
+    }
+    state.blocks = [...state.blocks.filter((b) => !b.automatic), ...fetched].sort((a, b) => a.start.localeCompare(b.start));
+    refreshBlockList();
+    saveAppData();
+    if (notify) alert('Feriados nacionais atualizados com sucesso.');
+  } catch (error) {
+    console.error(error);
+    alert('Nao foi possivel atualizar os feriados nacionais automaticamente.');
+  }
+}
+
+function getBlocksWithinCurrentPeriod() {
+  if (!state.phaseDays.length || !state.endDate) return state.blocks.filter((block) => !block.automatic);
+  const start = state.phaseDays[0];
+  const end = state.endDate;
+  return state.blocks.filter((block) => block.start <= end && block.end >= start);
 }
 
 async function generateSchedule() {
@@ -457,7 +426,11 @@ async function generateSchedule() {
     return;
   }
 
-  await ensureAutomaticHolidays();
+  if (els.autoNationalHolidays && els.autoNationalHolidays.checked) {
+    await ensureAutomaticHolidays(startDate, totalHours, hoursPerDay);
+  } else {
+    removeAutomaticBlocks();
+  }
 
   let phaseDays = [];
   if (mode === 'monthly-quota') {
@@ -547,12 +520,7 @@ function isValidPracticeDay(date) {
 }
 
 function findBlockForDate(dateStr) {
-  return getAllBlocks().find((block) => dateStr >= block.start && dateStr <= block.end) || null;
-}
-
-function getAllBlocks() {
-  if (!state.autoHolidaysEnabled) return [...state.blocks];
-  return [...state.blocks, ...state.autoHolidayBlocks.filter((autoBlock) => !state.blocks.some((manual) => autoBlock.start >= manual.start && autoBlock.start <= manual.end))];
+  return state.blocks.find((block) => dateStr >= block.start && dateStr <= block.end) || null;
 }
 
 function renderCalendar() {
@@ -618,10 +586,10 @@ function renderReport(hoursPerDay, totalHours, mode) {
   const rows = state.reportRows.map((row) => `
     <tr><td>${escapeHtml(row.month)}</td><td>${row.days}</td><td>${row.hours}</td></tr>
   `).join('');
-  const reportBlocks = getAllBlocks();
-  const blocksHtml = reportBlocks.length
-    ? `<ul>${reportBlocks.map((block) => `<li>${escapeHtml(block.description)} - ${friendlyBlockType(block.type)} (${formatDateBR(block.start)} ate ${formatDateBR(block.end)})${block.source === 'auto' ? ' [automatico]' : ''}</li>`).join('')}</ul>`
-    : '<p>Nenhum bloqueio cadastrado.</p>';
+  const displayBlocks = getBlocksWithinCurrentPeriod();
+  const blocksHtml = displayBlocks.length
+    ? `<ul>${displayBlocks.map((block) => `<li>${escapeHtml(block.description)} - ${friendlyBlockType(block.type)} (${formatDateBR(block.start)} ate ${formatDateBR(block.end)})${block.automatic ? ' [automatico]' : ''}</li>`).join('')}</ul>`
+    : '<p>Nenhum bloqueio dentro do periodo calculado.</p>';
 
   els.reportMount.className = 'report-box';
   els.reportMount.innerHTML = `
@@ -869,14 +837,14 @@ function drawPdfBlocks(pdf, margin, contentWidth, y, pageHeight, senaiLogoDataUr
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(10);
 
-  const reportBlocks = getAllBlocks();
-  if (!reportBlocks.length) {
-    pdf.text('Nenhum bloqueio cadastrado.', margin, y);
+  const displayBlocks = getBlocksWithinCurrentPeriod();
+  if (!displayBlocks.length) {
+    pdf.text('Nenhum bloqueio dentro do periodo calculado.', margin, y);
     return y + 8;
   }
 
-  reportBlocks.forEach((block) => {
-    const line = `${block.description} - ${friendlyBlockType(block.type)} (${formatDateBR(block.start)} ate ${formatDateBR(block.end)})${block.source === 'auto' ? ' [automatico]' : ''}`;
+  displayBlocks.forEach((block) => {
+    const line = `${block.description} - ${friendlyBlockType(block.type)} (${formatDateBR(block.start)} ate ${formatDateBR(block.end)})`;
     const lines = pdf.splitTextToSize(line, contentWidth - 6);
     const neededHeight = (lines.length * 5) + 3;
     if (y + neededHeight > pageHeight - margin) {
@@ -1082,9 +1050,7 @@ function resetAll() {
   if (!confirm('Deseja limpar os dados salvos da ficha?')) return;
 
   state.blocks = [];
-  state.autoHolidaysEnabled = true;
-  state.autoHolidayBlocks = [];
-  state.holidayYearsLoaded = [];
+  if (els.autoNationalHolidays) els.autoNationalHolidays.checked = false;
   state.monthlyQuotas = {};
   state.phaseDays = [];
   state.reportRows = [];
@@ -1096,7 +1062,6 @@ function resetAll() {
   els.hoursPerDay.value = 4;
   els.totalHours.value = 200;
   els.calculationMode.value = 'automatic';
-  els.autoHolidaysEnabled.checked = true;
   els.blockDescription.value = '';
   els.blockStart.value = '';
   els.blockEnd.value = '';
@@ -1110,10 +1075,8 @@ function resetAll() {
   els.reportMount.className = 'report-box empty-state';
   els.reportMount.textContent = 'O resumo do contrato sera exibido aqui.';
   clearStoredState();
-  updateHolidayStatus();
   updateSummary();
 }
-
 
 function switchTab(tabName) {
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === tabName));
