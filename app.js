@@ -318,14 +318,17 @@ function removeBlock(index) {
 }
 
 function refreshBlockList() {
-  if (!state.blocks.length) {
+  const visibleBlocks = getVisibleBlocksForSidebar();
+  if (!visibleBlocks.length) {
     els.blockList.className = 'tag-list empty-state';
-    els.blockList.textContent = 'Nenhum bloqueio cadastrado.';
+    els.blockList.textContent = state.blocks.some((block) => block.automatic)
+      ? 'Nenhum bloqueio dentro do periodo calculado.'
+      : 'Nenhum bloqueio cadastrado.';
     return;
   }
 
   els.blockList.className = 'tag-list';
-  els.blockList.innerHTML = state.blocks.map((block, index) => `
+  els.blockList.innerHTML = visibleBlocks.map(({ block, index }) => `
     <div class="block-item">
       <div class="block-meta">
         <strong>${escapeHtml(block.description)}${block.automatic ? ' [automatico]' : ''}</strong>
@@ -338,6 +341,17 @@ function refreshBlockList() {
   els.blockList.querySelectorAll('[data-remove-block]').forEach((button) => {
     button.addEventListener('click', () => removeBlock(Number(button.dataset.removeBlock)));
   });
+}
+
+function getVisibleBlocksForSidebar() {
+  if (!state.blocks.length) return [];
+
+  const hasCalculatedPeriod = state.phaseDays.length && state.endDate;
+  const visible = hasCalculatedPeriod
+    ? state.blocks.filter((block) => !block.automatic || (block.start <= state.endDate && block.end >= state.phaseDays[0]))
+    : state.blocks.filter((block) => !block.automatic);
+
+  return visible.map((block, index) => ({ block, index: state.blocks.indexOf(block) }));
 }
 
 
@@ -449,6 +463,7 @@ async function generateSchedule() {
   state.reportRows = buildMonthlyReport(phaseDays, hoursPerDay);
 
   renderCalendar();
+  refreshBlockList();
   renderReport(hoursPerDay, totalHours, mode);
   updateSummary(hoursPerDay, totalHours);
   switchTab('calendar');
