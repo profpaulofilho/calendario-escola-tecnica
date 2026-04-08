@@ -15,6 +15,7 @@ const state = {
   phaseDays: [],
   reportRows: [],
   endDate: null,
+  selectedWeekdays: [1, 2, 3, 4, 5],
 };
 
 const els = {};
@@ -124,6 +125,9 @@ function bindEvents() {
   els.modeToggle.addEventListener('click', toggleUiMode);
   if (els.btnRefreshHolidays) els.btnRefreshHolidays.addEventListener('click', refreshAutomaticHolidays);
   if (els.autoNationalHolidays) els.autoNationalHolidays.addEventListener('change', handleAutoHolidayToggle);
+  document.querySelectorAll('.weekday-check').forEach((checkbox) => {
+    checkbox.addEventListener('change', handleWeekdaySelectionChange);
+  });
   els.startDate.addEventListener('change', renderMonthlyQuotaInputs);
   document.querySelectorAll('.tab').forEach((button) => {
     button.addEventListener('click', () => switchTab(button.dataset.tab));
@@ -135,7 +139,8 @@ function enableAutoSave() {
   const watchedFields = [
     els.fillerName, els.clientName, els.unitName, els.startDate,
     els.hoursPerDay, els.totalHours, els.calculationMode, els.autoNationalHolidays,
-    els.blockType, els.blockDescription, els.blockStart, els.blockEnd
+    els.blockType, els.blockDescription, els.blockStart, els.blockEnd,
+    ...document.querySelectorAll('.weekday-check')
   ];
 
   watchedFields.forEach((field) => {
@@ -161,6 +166,7 @@ function saveAppData() {
     phaseDays: Array.isArray(state.phaseDays) ? state.phaseDays : [],
     reportRows: Array.isArray(state.reportRows) ? state.reportRows : [],
     endDate: state.endDate || null,
+    selectedWeekdays: Array.isArray(state.selectedWeekdays) ? state.selectedWeekdays : [1, 2, 3, 4, 5],
   };
   persistStoredState(payload);
 }
@@ -187,6 +193,44 @@ function loadAppData() {
   state.phaseDays = Array.isArray(payload.phaseDays) ? payload.phaseDays : [];
   state.reportRows = Array.isArray(payload.reportRows) ? payload.reportRows : [];
   state.endDate = payload.endDate || null;
+  state.selectedWeekdays = Array.isArray(payload.selectedWeekdays) && payload.selectedWeekdays.length
+    ? payload.selectedWeekdays.map(Number).sort((a, b) => a - b)
+    : [1, 2, 3, 4, 5];
+  applySelectedWeekdaysToUi();
+}
+
+function getSelectedWeekdays() {
+  return Array.from(document.querySelectorAll('.weekday-check:checked'))
+    .map((input) => Number(input.value))
+    .sort((a, b) => a - b);
+}
+
+function applySelectedWeekdaysToUi() {
+  const selected = Array.isArray(state.selectedWeekdays) && state.selectedWeekdays.length
+    ? state.selectedWeekdays.map(Number)
+    : [1, 2, 3, 4, 5];
+  document.querySelectorAll('.weekday-check').forEach((input) => {
+    input.checked = selected.includes(Number(input.value));
+  });
+}
+
+function handleWeekdaySelectionChange(event) {
+  const selected = getSelectedWeekdays();
+  if (!selected.length) {
+    event.target.checked = true;
+    alert('Selecione pelo menos um dia da semana para a prática.');
+    return;
+  }
+  state.selectedWeekdays = selected;
+  saveAppData();
+}
+
+function formatSelectedWeekdays() {
+  const map = {1:'Seg.',2:'Ter.',3:'Qua.',4:'Qui.',5:'Sex.'};
+  const selected = Array.isArray(state.selectedWeekdays) && state.selectedWeekdays.length
+    ? state.selectedWeekdays
+    : [1, 2, 3, 4, 5];
+  return selected.map((d) => map[d]).filter(Boolean).join(', ');
 }
 
 function restoreGeneratedResults() {
@@ -426,6 +470,7 @@ function getBlocksWithinCurrentPeriod() {
 }
 
 async function generateSchedule() {
+  state.selectedWeekdays = getSelectedWeekdays();
   const startDate = els.startDate.value;
   const hoursPerDay = Number(els.hoursPerDay.value || 0);
   const totalHours = Number(els.totalHours.value || 0);
@@ -530,7 +575,8 @@ function calculateMonthlyQuotaDays(startDate, totalHours, hoursPerDay) {
 
 function isValidPracticeDay(date) {
   const day = date.getDay();
-  if (day === 0 || day === 6) return false;
+  const selected = Array.isArray(state.selectedWeekdays) && state.selectedWeekdays.length ? state.selectedWeekdays : [1, 2, 3, 4, 5];
+  if (!selected.includes(day)) return false;
   return !findBlockForDate(fmtDate(date));
 }
 
@@ -613,6 +659,7 @@ function renderReport(hoursPerDay, totalHours, mode) {
       <div><strong>Empresa:</strong> ${client}</div>
       <div><strong>Unidade:</strong> ${unit}</div>
       <div><strong>Modo:</strong> ${mode === 'monthly-quota' ? 'Calendario personalizado por mes' : 'Automatico por dias uteis'}</div>
+      <div><strong>Dias considerados:</strong> ${formatSelectedWeekdays()}</div>
       <div><strong>Periodo:</strong> ${formatDateBR(state.phaseDays[0])} ate ${formatDateBR(state.endDate)}</div>
       <div><strong>Total previsto:</strong> ${state.phaseDays.length} dias / ${totalHours} horas</div>
       <div><strong>Horas por dia:</strong> ${hoursPerDay} h</div>

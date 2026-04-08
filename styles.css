@@ -492,3 +492,40 @@ h1 {
     width: min(240px, 70vw);
   }
 }
+
+.weekday-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel-soft);
+}
+.weekday-title {
+  font-weight: 700;
+  color: var(--text);
+}
+.weekday-panel small {
+  color: var(--muted);
+}
+.weekday-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.weekday-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  width: auto;
+}
+.weekday-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
