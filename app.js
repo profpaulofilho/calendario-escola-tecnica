@@ -20,6 +20,8 @@ const state = {
 
 const els = {};
 const STORAGE_KEY = 'fase-pratica-app-state';
+const MAX_SUPPORTED_YEAR = 2036;
+const MAX_SUPPORTED_DATE = `${MAX_SUPPORTED_YEAR}-12-31`;
 
 let senaiLogoDataUrlPromise = null;
 
@@ -281,8 +283,16 @@ function applyUiMode() {
 }
 
 function setDefaultStartDate() {
+  els.startDate.max = MAX_SUPPORTED_DATE;
+  els.blockStart.max = MAX_SUPPORTED_DATE;
+  els.blockEnd.max = MAX_SUPPORTED_DATE;
+
   if (!els.startDate.value) {
-    els.startDate.value = fmtDate(new Date());
+    const today = new Date();
+    const supportedToday = today > new Date(`${MAX_SUPPORTED_DATE}T00:00:00`)
+      ? new Date(`${MAX_SUPPORTED_DATE}T00:00:00`)
+      : today;
+    els.startDate.value = fmtDate(supportedToday);
   }
 }
 
@@ -298,9 +308,10 @@ function updateQuotaPanelVisibility() {
 }
 
 function renderMonthlyQuotaInputs() {
-  const initialYear = new Date(`${els.startDate.value || fmtDate(new Date())}T00:00:00`).getFullYear();
+  const initialYearRaw = new Date(`${els.startDate.value || fmtDate(new Date())}T00:00:00`).getFullYear();
+  const initialYear = Math.min(Math.max(initialYearRaw, new Date().getFullYear() - 20), MAX_SUPPORTED_YEAR);
   const months = [];
-  for (let year = initialYear; year <= initialYear + 2; year += 1) {
+  for (let year = initialYear; year <= MAX_SUPPORTED_YEAR; year += 1) {
     for (let month = 0; month < 12; month += 1) {
       const key = `${year}-${String(month + 1).padStart(2, '0')}`;
       const value = state.monthlyQuotas[key] ?? '';
@@ -477,6 +488,10 @@ async function generateSchedule() {
     alert('Informe a data de inicio da fase pratica.');
     return;
   }
+  if (startDate > MAX_SUPPORTED_DATE) {
+    alert(`A calculadora esta configurada para planejamentos ate ${MAX_SUPPORTED_DATE}.`);
+    return;
+  }
   if (hoursPerDay <= 0 || totalHours <= 0) {
     alert('Informe horas por dia e carga horaria total maiores que zero.');
     return;
@@ -496,6 +511,12 @@ async function generateSchedule() {
     return;
   }
 
+  const lastCalculatedDay = phaseDays[phaseDays.length - 1];
+  if (lastCalculatedDay > MAX_SUPPORTED_DATE) {
+    alert(`O calendario calculado ultrapassa ${MAX_SUPPORTED_DATE}. Ajuste a data de inicio, a carga horaria ou os dias selecionados.`);
+    return;
+  }
+
   state.phaseDays = phaseDays;
   state.endDate = phaseDays[phaseDays.length - 1];
   state.reportRows = buildMonthlyReport(phaseDays, hoursPerDay);
@@ -512,9 +533,10 @@ function calculateAutomaticDays(startDate, totalHours, hoursPerDay) {
   const requiredDays = Math.ceil(totalHours / hoursPerDay);
   const result = [];
   const cursor = new Date(`${startDate}T00:00:00`);
+  const maxDate = new Date(`${MAX_SUPPORTED_DATE}T00:00:00`);
   let safe = 0;
 
-  while (result.length < requiredDays && safe < 5000) {
+  while (result.length < requiredDays && safe < 5000 && cursor <= maxDate) {
     if (isValidPracticeDay(cursor)) result.push(fmtDate(cursor));
     cursor.setDate(cursor.getDate() + 1);
     safe += 1;
@@ -527,9 +549,10 @@ function calculateMonthlyQuotaDays(startDate, totalHours, hoursPerDay) {
   const result = [];
   const usedByMonth = {};
   const cursor = new Date(`${startDate}T00:00:00`);
+  const maxDate = new Date(`${MAX_SUPPORTED_DATE}T00:00:00`);
   let safe = 0;
 
-  while (result.length < requiredDays && safe < 5000) {
+  while (result.length < requiredDays && safe < 5000 && cursor <= maxDate) {
     const key = monthKey(cursor);
     const configured = Number(state.monthlyQuotas[key] || 0);
     const used = usedByMonth[key] || 0;
