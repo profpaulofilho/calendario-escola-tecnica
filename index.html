@@ -39,6 +39,10 @@
         <strong id="heroTotalDias">0</strong>
       </article>
       <article class="hero-metric">
+        <span>Carga horária</span>
+        <strong id="heroTotalHours">0 h</strong>
+      </article>
+      <article class="hero-metric">
         <span>Data final</span>
         <strong id="heroDataFim">--</strong>
       </article>
@@ -55,6 +59,19 @@
         </div>
 
         <div class="grid two">
+          <div class="full-width calculation-type-panel">
+            <span class="weekday-title">Modo de cálculo</span>
+            <div class="calculation-type-grid" role="radiogroup" aria-label="Modo de cálculo">
+              <label class="calculation-type-option">
+                <input type="radio" name="scheduleInputMode" value="hours-to-end" checked>
+                <span><strong>Data de início + carga horária</strong><small>Calcula a data final, mantendo a regra atual.</small></span>
+              </label>
+              <label class="calculation-type-option">
+                <input type="radio" name="scheduleInputMode" value="period-to-hours">
+                <span><strong>Data de início + data final</strong><small>Calcula a carga horária total do período.</small></span>
+              </label>
+            </div>
+          </div>
           <label>
             Responsável pelas informações
             <input id="fillerName" type="text" placeholder="Ex.: José da Silva" />
@@ -75,9 +92,13 @@
             Horas por dia
             <input id="hoursPerDay" type="number" min="1" max="12" value="4" />
           </label>
-          <label>
+          <label id="totalHoursField">
             Carga horária total
             <input id="totalHours" type="number" min="1" step="1" value="200" />
+          </label>
+          <label id="endDateField" hidden>
+            Data final da fase prática
+            <input id="endDateInput" type="date" max="2036-12-31" />
           </label>
           <label class="full-width advanced-only">
             Forma de cálculo

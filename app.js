@@ -16,6 +16,10 @@ const state = {
   reportRows: [],
   endDate: null,
   selectedWeekdays: [0, 1, 2, 3, 4, 5, 6],
+  scheduleInputMode: 'hours-to-end',
+  periodStart: null,
+  periodEnd: null,
+  totalHoursResult: 0,
 };
 
 const els = {};
@@ -110,6 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function bindElements() {
   [
     'fillerName', 'clientName', 'unitName', 'startDate', 'hoursPerDay', 'totalHours', 'calculationMode',
+    'endDateInput', 'totalHoursField', 'endDateField', 'heroTotalHours',
     'blockType', 'blockDescription', 'blockStart', 'blockEnd', 'blockList', 'monthlyQuotaContainer',
     'btnAddBlock', 'btnGenerate', 'btnReset', 'btnExportPdf', 'calendarLegend', 'calendarMount',
     'reportMount', 'sumPhaseDays', 'sumHoursPerDay', 'sumTotalHours', 'sumEndDate', 'heroTotalDias',
@@ -123,12 +128,16 @@ function bindEvents() {
   els.btnReset.addEventListener('click', resetAll);
   els.btnExportPdf.addEventListener('click', exportPdf);
   els.calculationMode.addEventListener('change', updateQuotaPanelVisibility);
+  document.querySelectorAll('input[name="scheduleInputMode"]').forEach((radio) => {
+    radio.addEventListener('change', handleScheduleInputModeChange);
+  });
   els.themeToggle.addEventListener('click', toggleTheme);
   els.modeToggle.addEventListener('click', toggleUiMode);
   document.querySelectorAll('.weekday-check').forEach((checkbox) => {
     checkbox.addEventListener('change', handleWeekdaySelectionChange);
   });
   els.startDate.addEventListener('change', renderMonthlyQuotaInputs);
+  els.startDate.addEventListener('change', syncEndDateMinimum);
   document.querySelectorAll('.tab').forEach((button) => {
     button.addEventListener('click', () => switchTab(button.dataset.tab));
   });
@@ -138,7 +147,8 @@ function bindEvents() {
 function enableAutoSave() {
   const watchedFields = [
     els.fillerName, els.clientName, els.unitName, els.startDate,
-    els.hoursPerDay, els.totalHours, els.calculationMode,
+    els.hoursPerDay, els.totalHours, els.calculationMode, els.endDateInput,
+    ...document.querySelectorAll('input[name="scheduleInputMode"]'),
     els.blockType, els.blockDescription, els.blockStart, els.blockEnd,
     ...document.querySelectorAll('.weekday-check')
   ];
@@ -166,6 +176,11 @@ function saveAppData() {
     reportRows: Array.isArray(state.reportRows) ? state.reportRows : [],
     endDate: state.endDate || null,
     selectedWeekdays: Array.isArray(state.selectedWeekdays) ? state.selectedWeekdays : [0, 1, 2, 3, 4, 5, 6],
+    scheduleInputMode: state.scheduleInputMode || 'hours-to-end',
+    endDateInput: els.endDateInput ? (els.endDateInput.value || '') : '',
+    periodStart: state.periodStart || null,
+    periodEnd: state.periodEnd || null,
+    totalHoursResult: Number(state.totalHoursResult || 0),
   };
   persistStoredState(payload);
 }
@@ -181,6 +196,10 @@ function loadAppData() {
   if (payload.hoursPerDay !== undefined && payload.hoursPerDay !== '') els.hoursPerDay.value = payload.hoursPerDay;
   if (payload.totalHours !== undefined && payload.totalHours !== '') els.totalHours.value = payload.totalHours;
   if (payload.calculationMode) els.calculationMode.value = payload.calculationMode;
+  state.scheduleInputMode = payload.scheduleInputMode === 'period-to-hours' ? 'period-to-hours' : 'hours-to-end';
+  const scheduleRadio = document.querySelector(`input[name="scheduleInputMode"][value="${state.scheduleInputMode}"]`);
+  if (scheduleRadio) scheduleRadio.checked = true;
+  if (payload.endDateInput && els.endDateInput) els.endDateInput.value = payload.endDateInput;
   if (payload.uiMode === 'simple' || payload.uiMode === 'advanced') {
     state.uiMode = payload.uiMode;
     try { window.localStorage.setItem('fase-pratica-ui-mode', state.uiMode); } catch (error) { console.error(error); }
@@ -191,10 +210,14 @@ function loadAppData() {
   state.phaseDays = Array.isArray(payload.phaseDays) ? payload.phaseDays : [];
   state.reportRows = Array.isArray(payload.reportRows) ? payload.reportRows : [];
   state.endDate = payload.endDate || null;
+  state.periodStart = payload.periodStart || (state.phaseDays[0] || null);
+  state.periodEnd = payload.periodEnd || state.endDate || null;
+  state.totalHoursResult = Number(payload.totalHoursResult || payload.totalHours || 0);
   state.selectedWeekdays = Array.isArray(payload.selectedWeekdays) && payload.selectedWeekdays.length
     ? payload.selectedWeekdays.map(Number).sort((a, b) => a - b)
     : [0, 1, 2, 3, 4, 5, 6];
   applySelectedWeekdaysToUi();
+  updateScheduleInputModeUi();
 }
 
 function getSelectedWeekdays() {
@@ -234,7 +257,7 @@ function formatSelectedWeekdays() {
 function restoreGeneratedResults() {
   if (!state.phaseDays.length || !state.endDate) return;
   const hoursPerDay = Number(els.hoursPerDay.value || 0);
-  const totalHours = Number(els.totalHours.value || 0);
+  const totalHours = Number(state.totalHoursResult || els.totalHours.value || 0);
   renderCalendar();
   renderReport(hoursPerDay, totalHours, els.calculationMode.value);
 }
@@ -280,12 +303,14 @@ function applyUiMode() {
   }
   els.modeToggle.textContent = isAdvanced ? 'Modo simples' : 'Modo avançado';
   updateQuotaPanelVisibility();
+  updateScheduleInputModeUi();
 }
 
 function setDefaultStartDate() {
   els.startDate.max = MAX_SUPPORTED_DATE;
   els.blockStart.max = MAX_SUPPORTED_DATE;
   els.blockEnd.max = MAX_SUPPORTED_DATE;
+  els.endDateInput.max = MAX_SUPPORTED_DATE;
 
   if (!els.startDate.value) {
     const today = new Date();
@@ -293,6 +318,38 @@ function setDefaultStartDate() {
       ? new Date(`${MAX_SUPPORTED_DATE}T00:00:00`)
       : today;
     els.startDate.value = fmtDate(supportedToday);
+  }
+  syncEndDateMinimum();
+}
+
+function getScheduleInputMode() {
+  const checked = document.querySelector('input[name="scheduleInputMode"]:checked');
+  return checked ? checked.value : 'hours-to-end';
+}
+
+function handleScheduleInputModeChange() {
+  state.scheduleInputMode = getScheduleInputMode();
+  updateScheduleInputModeUi();
+  saveAppData();
+}
+
+function updateScheduleInputModeUi() {
+  state.scheduleInputMode = getScheduleInputMode();
+  const periodMode = state.scheduleInputMode === 'period-to-hours';
+  els.totalHoursField.hidden = periodMode;
+  els.endDateField.hidden = !periodMode;
+  if (periodMode) {
+    els.calculationMode.value = 'automatic';
+  }
+  updateQuotaPanelVisibility();
+  syncEndDateMinimum();
+}
+
+function syncEndDateMinimum() {
+  if (!els.endDateInput) return;
+  els.endDateInput.min = els.startDate.value || '';
+  if (els.endDateInput.value && els.startDate.value && els.endDateInput.value < els.startDate.value) {
+    els.endDateInput.value = els.startDate.value;
   }
 }
 
@@ -303,7 +360,9 @@ function renderLegend() {
 }
 
 function updateQuotaPanelVisibility() {
-  const shouldShow = state.uiMode === 'advanced' && els.calculationMode.value === 'monthly-quota';
+  const shouldShow = state.uiMode === 'advanced'
+    && state.scheduleInputMode === 'hours-to-end'
+    && els.calculationMode.value === 'monthly-quota';
   els.quotaPanel.style.display = shouldShow ? '' : 'none';
 }
 
@@ -399,7 +458,7 @@ function getVisibleBlocksForSidebar() {
 
   const hasCalculatedPeriod = state.phaseDays.length && state.endDate;
   const visible = hasCalculatedPeriod
-    ? state.blocks.filter((block) => !block.automatic || (block.start <= state.endDate && block.end >= state.phaseDays[0]))
+    ? state.blocks.filter((block) => !block.automatic || (block.start <= (state.periodEnd || state.endDate) && block.end >= (state.periodStart || state.phaseDays[0])))
     : state.blocks.filter((block) => !block.automatic);
 
   return visible.map((block, index) => ({ block, index: state.blocks.indexOf(block) }));
@@ -418,7 +477,8 @@ async function ensureAutomaticHolidays(startDate, totalHours, hoursPerDay) {
   const approxEnd = new Date(start);
   approxEnd.setDate(approxEnd.getDate() + Math.max(requiredDays * 3, 370));
   const years = [];
-  for (let y = start.getFullYear(); y <= approxEnd.getFullYear(); y += 1) years.push(y);
+  const endYear = Math.min(approxEnd.getFullYear(), MAX_SUPPORTED_YEAR);
+  for (let y = start.getFullYear(); y <= endYear; y += 1) years.push(y);
   removeAutomaticBlocks();
   try {
     const fetched = [];
@@ -470,18 +530,63 @@ async function ensureAutomaticHolidays(startDate, totalHours, hoursPerDay) {
   }
 }
 
+async function ensureAutomaticHolidaysForPeriod(startDate, endDate) {
+  const startYear = new Date(`${startDate}T00:00:00`).getFullYear();
+  const endYear = new Date(`${endDate}T00:00:00`).getFullYear();
+  removeAutomaticBlocks();
+  try {
+    const fetched = [];
+    const seen = new Set();
+    for (let year = startYear; year <= endYear; year += 1) {
+      const response = await fetch(`https://brasilapi.com.br/api/feriados/v1/${year}`);
+      if (!response.ok) throw new Error(`Falha ao consultar feriados de ${year}.`);
+      const data = await response.json();
+      data.forEach((item) => {
+        if (!item || !item.date) return;
+        const key = `national-${item.date}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        fetched.push({
+          type: 'holiday', description: item.name || 'Feriado nacional', start: item.date, end: item.date,
+          automatic: true, holidayScope: 'Nacional',
+        });
+      });
+      [
+        { date: `${year}-06-24`, description: 'Sao Joao', scope: 'Bahia' },
+        { date: `${year}-07-02`, description: 'Independencia da Bahia', scope: 'Bahia' },
+        { date: `${year}-12-08`, description: 'Nossa Senhora da Conceicao da Praia', scope: 'Salvador/BA' },
+      ].forEach((item) => {
+        const key = `${item.scope}-${item.date}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        fetched.push({
+          type: 'holiday', description: item.description, start: item.date, end: item.date,
+          automatic: true, holidayScope: item.scope,
+        });
+      });
+    }
+    state.blocks = [...state.blocks.filter((b) => !b.automatic), ...fetched].sort((a, b) => a.start.localeCompare(b.start));
+    refreshBlockList();
+    saveAppData();
+  } catch (error) {
+    console.error(error);
+    alert('Nao foi possivel atualizar automaticamente os feriados nacionais e da Bahia.');
+  }
+}
+
 function getBlocksWithinCurrentPeriod() {
   if (!state.phaseDays.length || !state.endDate) return state.blocks.filter((block) => !block.automatic);
-  const start = state.phaseDays[0];
-  const end = state.endDate;
+  const start = state.periodStart || state.phaseDays[0];
+  const end = state.periodEnd || state.endDate;
   return state.blocks.filter((block) => block.start <= end && block.end >= start);
 }
 
 async function generateSchedule() {
   state.selectedWeekdays = getSelectedWeekdays();
+  state.scheduleInputMode = getScheduleInputMode();
   const startDate = els.startDate.value;
   const hoursPerDay = Number(els.hoursPerDay.value || 0);
-  const totalHours = Number(els.totalHours.value || 0);
+  const informedTotalHours = Number(els.totalHours.value || 0);
   const mode = state.uiMode === 'advanced' ? els.calculationMode.value : 'automatic';
 
   if (!startDate) {
@@ -492,33 +597,66 @@ async function generateSchedule() {
     alert(`A calculadora esta configurada para planejamentos ate ${MAX_SUPPORTED_DATE}.`);
     return;
   }
-  if (hoursPerDay <= 0 || totalHours <= 0) {
-    alert('Informe horas por dia e carga horaria total maiores que zero.');
+  if (hoursPerDay <= 0) {
+    alert('Informe horas por dia maiores que zero.');
     return;
   }
-
-  await ensureAutomaticHolidays(startDate, totalHours, hoursPerDay);
 
   let phaseDays = [];
-  if (mode === 'monthly-quota') {
-    phaseDays = calculateMonthlyQuotaDays(startDate, totalHours, hoursPerDay);
+  let totalHours = informedTotalHours;
+
+  if (state.scheduleInputMode === 'period-to-hours') {
+    const requestedEndDate = els.endDateInput.value;
+    if (!requestedEndDate) {
+      alert('Informe a data final da fase pratica.');
+      return;
+    }
+    if (requestedEndDate < startDate) {
+      alert('A data final nao pode ser anterior a data de inicio.');
+      return;
+    }
+    if (requestedEndDate > MAX_SUPPORTED_DATE) {
+      alert(`A data final deve ser igual ou anterior a ${MAX_SUPPORTED_DATE}.`);
+      return;
+    }
+
+    await ensureAutomaticHolidaysForPeriod(startDate, requestedEndDate);
+    phaseDays = calculateDaysWithinPeriod(startDate, requestedEndDate);
+    if (!phaseDays.length) {
+      alert('O periodo informado nao possui dias validos de pratica com as regras selecionadas.');
+      return;
+    }
+    totalHours = phaseDays.length * hoursPerDay;
+    state.periodStart = startDate;
+    state.periodEnd = requestedEndDate;
+    state.endDate = requestedEndDate;
   } else {
-    phaseDays = calculateAutomaticDays(startDate, totalHours, hoursPerDay);
-  }
-
-  if (!phaseDays.length) {
-    alert('Nao foi possivel calcular os dias de pratica com as regras informadas.');
-    return;
-  }
-
-  const lastCalculatedDay = phaseDays[phaseDays.length - 1];
-  if (lastCalculatedDay > MAX_SUPPORTED_DATE) {
-    alert(`O calendario calculado ultrapassa ${MAX_SUPPORTED_DATE}. Ajuste a data de inicio, a carga horaria ou os dias selecionados.`);
-    return;
+    if (informedTotalHours <= 0) {
+      alert('Informe a carga horaria total maior que zero.');
+      return;
+    }
+    await ensureAutomaticHolidays(startDate, informedTotalHours, hoursPerDay);
+    if (mode === 'monthly-quota') {
+      phaseDays = calculateMonthlyQuotaDays(startDate, informedTotalHours, hoursPerDay);
+    } else {
+      phaseDays = calculateAutomaticDays(startDate, informedTotalHours, hoursPerDay);
+    }
+    if (!phaseDays.length) {
+      alert('Nao foi possivel calcular os dias de pratica com as regras informadas.');
+      return;
+    }
+    const lastCalculatedDay = phaseDays[phaseDays.length - 1];
+    if (lastCalculatedDay > MAX_SUPPORTED_DATE) {
+      alert(`O calendario calculado ultrapassa ${MAX_SUPPORTED_DATE}. Ajuste a data de inicio, a carga horaria ou os dias selecionados.`);
+      return;
+    }
+    state.periodStart = phaseDays[0];
+    state.periodEnd = lastCalculatedDay;
+    state.endDate = lastCalculatedDay;
   }
 
   state.phaseDays = phaseDays;
-  state.endDate = phaseDays[phaseDays.length - 1];
+  state.totalHoursResult = totalHours;
   state.reportRows = buildMonthlyReport(phaseDays, hoursPerDay);
 
   renderCalendar();
@@ -527,6 +665,19 @@ async function generateSchedule() {
   updateSummary(hoursPerDay, totalHours);
   switchTab('calendar');
   saveAppData();
+}
+
+function calculateDaysWithinPeriod(startDate, endDate) {
+  const result = [];
+  const cursor = new Date(`${startDate}T00:00:00`);
+  const limit = new Date(`${endDate}T00:00:00`);
+  let safe = 0;
+  while (cursor <= limit && safe < 10000) {
+    if (isValidPracticeDay(cursor)) result.push(fmtDate(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+    safe += 1;
+  }
+  return result;
 }
 
 function calculateAutomaticDays(startDate, totalHours, hoursPerDay) {
@@ -607,7 +758,7 @@ function renderCalendar() {
     return;
   }
 
-  const grouped = groupMonthsBetween(state.phaseDays[0], state.phaseDays[state.phaseDays.length - 1]);
+  const grouped = groupMonthsBetween(state.periodStart || state.phaseDays[0], state.periodEnd || state.phaseDays[state.phaseDays.length - 1]);
   els.calendarMount.className = 'calendar-mount';
   els.calendarMount.innerHTML = Object.entries(grouped).map(([year, months]) => `
     <section class="calendar-year">
@@ -674,10 +825,10 @@ function renderReport(hoursPerDay, totalHours, mode) {
       <div><strong>Responsavel pelas informacoes:</strong> ${filler}</div>
       <div><strong>Empresa:</strong> ${client}</div>
       <div><strong>Unidade:</strong> ${unit}</div>
-      <div><strong>Modo:</strong> ${mode === 'monthly-quota' ? 'Calendario personalizado por mes' : 'Automatico por dias uteis'}</div>
+      <div><strong>Modo:</strong> ${state.scheduleInputMode === 'period-to-hours' ? 'Data de inicio + data final' : (mode === 'monthly-quota' ? 'Calendario personalizado por mes' : 'Data de inicio + carga horaria')}</div>
       <div><strong>Dias considerados:</strong> ${formatSelectedWeekdays()}</div>
-      <div><strong>Periodo:</strong> ${formatDateBR(state.phaseDays[0])} ate ${formatDateBR(state.endDate)}</div>
-      <div><strong>Total previsto:</strong> ${state.phaseDays.length} dias / ${totalHours} horas</div>
+      <div><strong>Periodo:</strong> ${formatDateBR(state.periodStart || state.phaseDays[0])} ate ${formatDateBR(state.periodEnd || state.endDate)}</div>
+      <div><strong>${state.scheduleInputMode === 'period-to-hours' ? 'Total calculado' : 'Total previsto'}:</strong> ${state.phaseDays.length} dias / ${totalHours} horas</div>
       <div><strong>Horas por dia:</strong> ${hoursPerDay} h</div>
     </div>
     <h4>Distribuicao por mes</h4>
@@ -697,6 +848,7 @@ function updateSummary(hoursPerDay = Number(els.hoursPerDay.value || 0), totalHo
   const end = state.endDate ? formatDateBR(state.endDate) : '--';
   els.sumEndDate.textContent = end;
   els.heroTotalDias.textContent = state.phaseDays.length || 0;
+  els.heroTotalHours.textContent = `${totalHours || 0} h`;
   els.heroDataFim.textContent = end;
 }
 
@@ -767,7 +919,7 @@ async function exportPdf() {
 
 
 function appendCalendarPagesLandscape(pdf, senaiLogoDataUrl) {
-  const grouped = groupMonthsBetween(state.phaseDays[0], state.phaseDays[state.phaseDays.length - 1]);
+  const grouped = groupMonthsBetween(state.periodStart || state.phaseDays[0], state.periodEnd || state.phaseDays[state.phaseDays.length - 1]);
   const months = [];
   Object.entries(grouped).forEach(([year, items]) => {
     items.forEach((item) => months.push({ year: Number(year), month: item.month }));
@@ -820,8 +972,8 @@ function drawLandscapeCalendarHeader(pdf, logoDataUrl) {
   pdf.text('Calendario da Fase Pratica', pageWidth / 2, 7.5, { align: 'center' });
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8.5);
-  const periodStart = state.phaseDays[0] ? formatDateBR(state.phaseDays[0]) : '--';
-  const periodEnd = state.endDate ? formatDateBR(state.endDate) : '--';
+  const periodStart = (state.periodStart || state.phaseDays[0]) ? formatDateBR(state.periodStart || state.phaseDays[0]) : '--';
+  const periodEnd = (state.periodEnd || state.endDate) ? formatDateBR(state.periodEnd || state.endDate) : '--';
   pdf.text(`${periodStart} ate ${periodEnd}`, pageWidth / 2, 12, { align: 'center' });
   pdf.setDrawColor(209, 213, 219);
   pdf.line(8, 15, pageWidth - 8, 15);
@@ -929,8 +1081,8 @@ function drawLandscapeSummaryHeader(pdf, logoDataUrl) {
   pdf.text('Resumo de feriados e bloqueios', pageWidth / 2, 8, { align: 'center' });
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8.5);
-  const periodStart = state.phaseDays[0] ? formatDateBR(state.phaseDays[0]) : '--';
-  const periodEnd = state.endDate ? formatDateBR(state.endDate) : '--';
+  const periodStart = (state.periodStart || state.phaseDays[0]) ? formatDateBR(state.periodStart || state.phaseDays[0]) : '--';
+  const periodEnd = (state.periodEnd || state.endDate) ? formatDateBR(state.periodEnd || state.endDate) : '--';
   pdf.text(`${periodStart} ate ${periodEnd}`, pageWidth / 2, 12.8, { align: 'center' });
   pdf.setDrawColor(209, 213, 219);
   pdf.line(8, 15, pageWidth - 8, 15);
@@ -1053,11 +1205,13 @@ function drawPdfCover(pdf, margin, contentWidth, y, senaiLogoDataUrl) {
   const filler = (els.fillerName.value || '').trim() || 'Nao informado';
   const client = (els.clientName.value || '').trim() || 'Nao informado';
   const unit = (els.unitName.value || '').trim() || 'Nao informada';
-  const mode = state.uiMode === 'advanced' && els.calculationMode.value === 'monthly-quota'
-    ? 'Calendario personalizado por mes'
-    : 'Automatico por dias uteis';
-  const periodStart = state.phaseDays[0] ? formatDateBR(state.phaseDays[0]) : '--';
-  const periodEnd = state.endDate ? formatDateBR(state.endDate) : '--';
+  const mode = state.scheduleInputMode === 'period-to-hours'
+    ? 'Data de inicio + data final'
+    : (state.uiMode === 'advanced' && els.calculationMode.value === 'monthly-quota'
+      ? 'Calendario personalizado por mes'
+      : 'Data de inicio + carga horaria');
+  const periodStart = (state.periodStart || state.phaseDays[0]) ? formatDateBR(state.periodStart || state.phaseDays[0]) : '--';
+  const periodEnd = (state.periodEnd || state.endDate) ? formatDateBR(state.periodEnd || state.endDate) : '--';
 
   pdf.setDrawColor(209, 213, 219);
   pdf.setFillColor(255, 255, 255);
@@ -1078,7 +1232,7 @@ function drawPdfCover(pdf, margin, contentWidth, y, senaiLogoDataUrl) {
 
   const cards = [
     ['Dias de pratica', String(state.phaseDays.length)],
-    ['Carga horaria', `${Number(els.totalHours.value || 0)} h`],
+    ['Carga horaria', `${Number(state.totalHoursResult || els.totalHours.value || 0)} h`],
     ['Data final', periodEnd],
   ];
   const gap = 4;
@@ -1208,7 +1362,7 @@ function drawPdfBlocks(pdf, margin, contentWidth, y, pageHeight, senaiLogoDataUr
 }
 
 function appendCalendarPages(pdf, margin, contentWidth, pageHeight, senaiLogoDataUrl) {
-  const grouped = groupMonthsBetween(state.phaseDays[0], state.phaseDays[state.phaseDays.length - 1]);
+  const grouped = groupMonthsBetween(state.periodStart || state.phaseDays[0], state.periodEnd || state.phaseDays[state.phaseDays.length - 1]);
   const months = [];
 
   Object.entries(grouped).forEach(([year, items]) => {
@@ -1403,12 +1557,19 @@ function resetAll() {
   state.phaseDays = [];
   state.reportRows = [];
   state.endDate = null;
+  state.periodStart = null;
+  state.periodEnd = null;
+  state.totalHoursResult = 0;
+  state.scheduleInputMode = 'hours-to-end';
 
   els.fillerName.value = '';
   els.clientName.value = '';
   els.unitName.value = '';
   els.hoursPerDay.value = 4;
   els.totalHours.value = 200;
+  els.endDateInput.value = '';
+  const defaultModeRadio = document.querySelector('input[name="scheduleInputMode"][value="hours-to-end"]');
+  if (defaultModeRadio) defaultModeRadio.checked = true;
   els.calculationMode.value = 'automatic';
   els.blockDescription.value = '';
   els.blockStart.value = '';
@@ -1417,6 +1578,7 @@ function resetAll() {
   refreshBlockList();
   renderMonthlyQuotaInputs();
   applyUiMode();
+  updateScheduleInputModeUi();
 
   els.calendarMount.className = 'calendar-mount empty-state';
   els.calendarMount.innerHTML = 'Preencha os dados e clique em <strong>Gerar calendario</strong>.';
