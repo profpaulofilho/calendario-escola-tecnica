@@ -575,3 +575,78 @@ h1 {
 @media (max-width: 720px) {
   .calculation-type-grid { grid-template-columns: 1fr; }
 }
+
+/* ===== Etapa I (fase escolar SENAI) e Etapa II (fase pratica EMPRESA) ===== */
+:root {
+  --school: #4f46e5;
+  --school-soft: rgba(79, 70, 229, .20);
+  --practice: #16a34a;
+  --practice-soft: rgba(22, 163, 74, .20);
+}
+html[data-theme="dark"] {
+  --school: #818cf8;
+  --school-soft: rgba(129, 140, 248, .28);
+  --practice: #22c55e;
+  --practice-soft: rgba(34, 197, 94, .25);
+}
+.hero-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.hero-school strong { color: var(--school); }
+@media (max-width: 1100px) { .hero-strip { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 720px) { .hero-strip { grid-template-columns: 1fr; } }
+
+.field-hint { color: var(--school); font-size: .78rem; font-weight: 600; }
+input[readonly] { background: var(--panel-soft); color: var(--muted); cursor: not-allowed; }
+
+.school-panel { border-color: var(--school); border-width: 1.5px; }
+.school-panel-head { display: flex; flex-direction: column; gap: 10px; }
+.school-panel-head small, .practice-format-panel > div > small { display: block; color: var(--muted); margin-top: 4px; }
+.switch-option {
+  display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+  color: var(--text); font-weight: 600; font-size: .86rem;
+}
+.switch-option input { width: 16px; height: 16px; margin: 0; }
+.school-panel.is-disabled .school-body, .practice-format-panel.is-disabled .format-grid { opacity: .45; pointer-events: none; }
+.file-drop {
+  display: grid; gap: 4px; padding: 16px; border: 1.5px dashed var(--school);
+  border-radius: 16px; background: var(--panel); cursor: pointer; text-align: center;
+}
+.file-drop:hover { background: var(--school-soft); }
+.file-drop input { display: none; }
+.file-drop-title { color: var(--text); font-weight: 700; }
+.file-drop-hint { color: var(--muted); font-size: .86rem; line-height: 1.45; }
+.file-drop.has-file { border-style: solid; background: var(--school-soft); }
+
+.practice-format-panel { border-color: var(--practice); border-width: 1.5px; }
+.format-grid { display: grid; gap: 10px; }
+.format-option {
+  display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--panel); cursor: pointer;
+}
+.format-option input { width: 16px; height: 16px; margin: 3px 0 0; flex: none; }
+.format-option span { display: grid; gap: 3px; }
+.format-option strong { color: var(--text); }
+.format-option small { color: var(--muted); line-height: 1.4; }
+.format-option:has(input:checked) { border-color: var(--practice); background: var(--practice-soft); }
+.format-info {
+  padding: 12px 14px; border-radius: 14px; background: var(--panel);
+  border: 1px solid var(--line); color: var(--text); font-size: .9rem; line-height: 1.5;
+}
+.format-info.warn { border-color: #f59e0b; background: rgba(245, 158, 11, .12); }
+
+.calendar-hint { margin: -6px 0 14px; }
+.day.school { background: var(--school-soft); color: var(--school); font-weight: 700; }
+.day.phase { background: var(--practice-soft); color: var(--practice); }
+.day.phase.school {
+  background: linear-gradient(135deg, var(--school-soft) 0 50%, var(--practice-soft) 50% 100%);
+  color: var(--text);
+}
+.day.override { outline: 2px dashed var(--school); outline-offset: -3px; }
+.day.milestone { position: relative; }
+.day.milestone::after { content: '★'; position: absolute; top: 1px; right: 4px; font-size: .7rem; color: #d97706; }
+.days.clickable .day:not(.muted) { cursor: pointer; }
+.days.clickable .day:not(.muted):hover { filter: brightness(.92); }
+.swatch.swatch-both { background: linear-gradient(135deg, var(--school) 0 50%, var(--practice) 50% 100%) !important; }
+.phase-tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .85rem; font-weight: 700; }
+.phase-tag.school { background: var(--school-soft); color: var(--school); }
+.phase-tag.practice { background: var(--practice-soft); color: var(--practice); }
+.report-box .report-note { padding: 10px 12px; border-radius: 12px; background: rgba(245, 158, 11, .12); color: var(--text); }

@@ -34,6 +34,10 @@
     </header>
 
     <section class="hero-strip">
+      <article class="hero-metric hero-school">
+        <span>Etapa I • Dias de aula SENAI</span>
+        <strong id="heroSchoolDays">--</strong>
+      </article>
       <article class="hero-metric">
         <span>Dias de prática</span>
         <strong id="heroTotalDias">0</strong>
@@ -87,6 +91,7 @@
           <label>
             Início da fase prática
             <input id="startDate" type="date" max="2036-12-31" />
+            <small id="startDateHint" class="field-hint" hidden>Calculado automaticamente pelo formato da prática (Etapa II).</small>
           </label>
           <label>
             Horas por dia
@@ -122,9 +127,124 @@
           </div>
         </div>
 
+        <section class="subpanel school-panel" id="schoolPanel">
+          <div class="school-panel-head">
+            <div>
+              <strong>2. Etapa I – Fase escolar SENAI</strong>
+              <small>Conforme o cronograma da fase escolar disponibilizado pela unidade (PDF).</small>
+            </div>
+            <label class="switch-option">
+              <input type="checkbox" id="schoolEnabled" checked />
+              Incluir Etapa I no cronograma
+            </label>
+          </div>
+
+          <div class="school-body">
+            <label class="file-drop spacing-top" for="schoolPdf">
+              <span class="file-drop-title">📄 Cronograma da fase escolar (PDF da unidade)</span>
+              <span class="file-drop-hint" id="schoolPdfStatus">Clique para selecionar o arquivo PDF emitido pela unidade.</span>
+              <input id="schoolPdf" type="file" accept="application/pdf,.pdf" />
+            </label>
+            <div class="inline-actions spacing-top" id="schoolPdfActions" style="display:none;">
+              <button class="secondary-btn" id="btnRemoveSchoolPdf" type="button">Remover PDF</button>
+              <span class="helper-text">O PDF será anexado ao final do documento impresso.</span>
+            </div>
+
+            <div class="grid two compact spacing-top">
+              <label>
+                Início das aulas
+                <input id="schoolStart" type="date" max="2036-12-31" />
+              </label>
+              <label>
+                Término das aulas
+                <input id="schoolEnd" type="date" max="2036-12-31" />
+              </label>
+              <label>
+                Carga horária da fase escolar (h)
+                <input id="schoolTotalHours" type="number" min="1" step="1" placeholder="Ex.: 1000" />
+              </label>
+              <label>
+                Horas de aula por dia
+                <input id="schoolHoursPerDay" type="number" min="1" max="12" value="4" />
+              </label>
+              <label>
+                Turno das aulas
+                <select id="schoolShift">
+                  <option value="morning">Manhã</option>
+                  <option value="afternoon" selected>Tarde</option>
+                  <option value="night">Noite</option>
+                </select>
+              </label>
+              <label>
+                Horário das aulas
+                <input id="schoolTime" type="text" placeholder="Ex.: 13:00 às 17:00" />
+              </label>
+            </div>
+
+            <div class="weekday-panel spacing-top">
+              <span class="weekday-title">Dias da semana com aula no SENAI</span>
+              <div class="weekday-grid">
+                <label class="weekday-option"><input type="checkbox" class="school-weekday-check" value="1" checked> Seg.</label>
+                <label class="weekday-option"><input type="checkbox" class="school-weekday-check" value="2" checked> Ter.</label>
+                <label class="weekday-option"><input type="checkbox" class="school-weekday-check" value="3" checked> Qua.</label>
+                <label class="weekday-option"><input type="checkbox" class="school-weekday-check" value="4" checked> Qui.</label>
+                <label class="weekday-option"><input type="checkbox" class="school-weekday-check" value="5" checked> Sex.</label>
+                <label class="weekday-option"><input type="checkbox" class="school-weekday-check" value="6"> Sáb.</label>
+                <label class="weekday-option"><input type="checkbox" class="school-weekday-check" value="0"> Dom.</label>
+              </div>
+            </div>
+
+            <div class="spacing-top">
+              <span class="weekday-title">Recessos e dias sem aula da escola</span>
+              <div class="grid two compact spacing-top">
+                <label>
+                  Data inicial
+                  <input id="nonSchoolStart" type="date" max="2036-12-31" />
+                </label>
+                <label>
+                  Data final
+                  <input id="nonSchoolEnd" type="date" max="2036-12-31" />
+                </label>
+                <label class="full-width">
+                  Descrição
+                  <input id="nonSchoolDescription" type="text" placeholder="Ex.: Recesso escolar" />
+                </label>
+              </div>
+              <div class="inline-actions spacing-top">
+                <button class="secondary-btn" id="btnAddNonSchool" type="button">Adicionar período sem aula</button>
+              </div>
+              <div id="nonSchoolList" class="tag-list empty-state spacing-top">Nenhum período sem aula cadastrado.</div>
+            </div>
+
+            <p class="helper-text spacing-top">Dica: depois de gerar, clique em um dia do calendário para marcar ou desmarcar aula SENAI e deixar igual ao PDF da unidade.</p>
+          </div>
+        </section>
+
+        <section class="subpanel practice-format-panel" id="practiceFormatPanel">
+          <div>
+            <strong>3. Etapa II – Formato da fase prática EMPRESA</strong>
+            <small>Define quando e em quais dias a prática na empresa acontece.</small>
+          </div>
+          <div class="format-grid spacing-top" role="radiogroup" aria-label="Formato da fase prática">
+            <label class="format-option">
+              <input type="radio" name="practiceFormat" value="subsequent">
+              <span><strong>a) Prática subsequente</strong><small>A prática na empresa só inicia após a conclusão da fase escolar.</small></span>
+            </label>
+            <label class="format-option">
+              <input type="radio" name="practiceFormat" value="concurrent" checked>
+              <span><strong>b) Prática concomitante</strong><small>Inicia após 10% da carga horária da fase escolar, no turno oposto às aulas.</small></span>
+            </label>
+            <label class="format-option">
+              <input type="radio" name="practiceFormat" value="dual">
+              <span><strong>c) Prática dual</strong><small>Inicia após 10% da carga horária da fase escolar, em dias alternados (dias sem aula).</small></span>
+            </label>
+          </div>
+          <div id="practiceStartInfo" class="format-info spacing-top" hidden></div>
+        </section>
+
         <section class="subpanel" open>
           <div>
-            <strong>2. Bloqueios</strong>
+            <strong>4. Bloqueios</strong>
             <small>Cadastre feriados, recessos ou outras pausas.</small>
           </div>
 
@@ -162,7 +282,7 @@
 
         <section class="subpanel advanced-only" id="quotaPanel">
           <div>
-            <strong>3. Calendário personalizado por mês</strong>
+            <strong>5. Calendário personalizado por mês</strong>
             <small>Use quando já houver quantidade de dias definida em cada mês.</small>
           </div>
           <p class="helper-text spacing-top">Preencha apenas os meses que terão dias de prática.</p>
@@ -170,9 +290,11 @@
         </section>
 
         <section class="subpanel guide-panel">
-          <h3>4. Como usar</h3>
+          <h3>6. Como usar</h3>
           <ol class="guide-list">
             <li>Preencha os dados principais.</li>
+            <li>Na Etapa I, anexe o PDF da unidade e informe o período e a carga horária das aulas.</li>
+            <li>Na Etapa II, escolha o formato da prática (subsequente, concomitante ou dual). O início da prática é calculado automaticamente.</li>
             <li>Cadastre os bloqueios quando houver.</li>
             <li>Clique em <strong>Gerar calendário</strong>.</li>
             <li>Confira o resultado e clique em <strong>Baixar PDF</strong>.</li>
@@ -213,6 +335,7 @@
 
         <div class="tab-content active" id="tab-calendar">
           <div id="calendarLegend" class="legend"></div>
+          <p id="calendarHint" class="helper-text calendar-hint" style="display:none;">Clique em um dia para marcar ou desmarcar <strong>aula SENAI</strong>. Dias ajustados manualmente aparecem com borda tracejada; ★ indica o dia em que se completam 10% da carga horária escolar.</p>
           <div id="calendarMount" class="calendar-mount empty-state">Preencha os dados e clique em <strong>Gerar calendário</strong>.</div>
         </div>
 
@@ -226,6 +349,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="app.js"></script>
   <script>
   fetch('https://rbqaspkaytbplgrplelf.supabase.co/rest/v1/rpc/increment_link_click', {

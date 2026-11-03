@@ -1,7 +1,9 @@
 const monthNames = ['Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 const weekdayNames = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 const legendItems = [
-  { label: 'Dia de pratica', className: 'phase', color: '#16a34a' },
+  { label: 'Etapa I - Fase escolar SENAI', className: 'school', color: '#4f46e5', schoolOnly: true },
+  { label: 'Etapa II - Fase pratica EMPRESA', className: 'phase', color: '#16a34a' },
+  { label: 'Etapas I e II no mesmo dia (turnos opostos)', className: 'both', color: '', swatchClass: 'swatch-both', schoolOnly: true },
   { label: 'Feriado', className: 'block-holiday', color: '#f59e0b' },
   { label: 'Recesso', className: 'block-recess', color: '#ef4444' },
   { label: 'Folga administrativa', className: 'block-admin-leave', color: '#0f62fe' },
@@ -20,6 +22,48 @@ const state = {
   periodStart: null,
   periodEnd: null,
   totalHoursResult: 0,
+  school: defaultSchoolState(),
+  schoolDays: [],
+  schoolMilestone: null,
+};
+
+/* ===== Etapa I / Etapa II ===== */
+let schoolPdfPages = [];
+let schoolDaySet = new Set();
+let phaseDaySet = new Set();
+
+function defaultSchoolState() {
+  return {
+    enabled: true,
+    start: '',
+    end: '',
+    totalHours: '',
+    hoursPerDay: 4,
+    shift: 'afternoon',
+    time: '',
+    weekdays: [1, 2, 3, 4, 5],
+    nonSchool: [],
+    overrides: {},
+    format: 'concurrent',
+    pdfName: '',
+    pdfPageCount: 0,
+  };
+}
+
+const PRACTICE_FORMATS = {
+  subsequent: { label: 'Pratica subsequente', short: 'Subsequente', rule: 'Inicia apos a conclusao da fase escolar' },
+  concurrent: { label: 'Pratica concomitante', short: 'Concomitante', rule: 'Inicia apos 10% da carga horaria da fase escolar, no turno oposto as aulas' },
+  dual: { label: 'Pratica dual', short: 'Dual', rule: 'Inicia apos 10% da carga horaria da fase escolar, em dias alternados' },
+};
+const SHIFT_LABELS = { morning: 'Manha', afternoon: 'Tarde', night: 'Noite' };
+const OPPOSITE_SHIFT = { morning: 'Tarde', afternoon: 'Manha', night: 'Manha ou Tarde' };
+
+const PDF_COLORS = {
+  school: [199, 210, 254],
+  schoolText: [55, 48, 163],
+  practice: [187, 247, 208],
+  practiceText: [21, 94, 47],
+  weekend: [248, 250, 252],
 };
 
 const els = {};
@@ -96,13 +140,15 @@ document.addEventListener('DOMContentLoaded', () => {
   loadUiMode();
   loadAppData();
   setDefaultStartDate();
+  applySchoolStateToUi();
+  restoreSchoolPdf();
   renderLegend();
   renderMonthlyQuotaInputs();
   refreshBlockList();
   applyUiMode();
   updateQuotaPanelVisibility();
   restoreGeneratedResults();
-  updateSummary();
+  updateSummary(undefined, state.phaseDays.length ? Number(state.totalHoursResult || els.totalHours.value || 0) : undefined);
   enableAutoSave();
   saveAppData();
   window.addEventListener('beforeunload', saveAppData);
@@ -118,7 +164,11 @@ function bindElements() {
     'blockType', 'blockDescription', 'blockStart', 'blockEnd', 'blockList', 'monthlyQuotaContainer',
     'btnAddBlock', 'btnGenerate', 'btnReset', 'btnExportPdf', 'calendarLegend', 'calendarMount',
     'reportMount', 'sumPhaseDays', 'sumHoursPerDay', 'sumTotalHours', 'sumEndDate', 'heroTotalDias',
-    'heroDataFim', 'themeToggle', 'quotaPanel', 'modeToggle'
+    'heroDataFim', 'themeToggle', 'quotaPanel', 'modeToggle',
+    'heroSchoolDays', 'startDateHint', 'schoolPanel', 'schoolEnabled', 'schoolPdf', 'schoolPdfStatus', 'schoolPdfActions',
+    'btnRemoveSchoolPdf', 'schoolStart', 'schoolEnd', 'schoolTotalHours', 'schoolHoursPerDay', 'schoolShift', 'schoolTime',
+    'nonSchoolStart', 'nonSchoolEnd', 'nonSchoolDescription', 'btnAddNonSchool', 'nonSchoolList', 'calendarHint',
+    'practiceFormatPanel', 'practiceStartInfo'
   ].forEach((id) => { els[id] = document.getElementById(id); });
 }
 
@@ -141,6 +191,21 @@ function bindEvents() {
   document.querySelectorAll('.tab').forEach((button) => {
     button.addEventListener('click', () => switchTab(button.dataset.tab));
   });
+
+  // Etapa I / Etapa II
+  els.schoolPdf.addEventListener('change', handleSchoolPdfSelected);
+  els.btnRemoveSchoolPdf.addEventListener('click', removeSchoolPdf);
+  els.btnAddNonSchool.addEventListener('click', addNonSchoolPeriod);
+  const onSchoolChange = () => { readSchoolInputs(); syncSchoolModeUi(); saveAppData(); };
+  els.schoolEnabled.addEventListener('change', onSchoolChange);
+  [els.schoolStart, els.schoolEnd, els.schoolTotalHours, els.schoolHoursPerDay, els.schoolShift, els.schoolTime].forEach((field) => {
+    field.addEventListener('change', onSchoolChange);
+    field.addEventListener('input', onSchoolChange);
+  });
+  document.querySelectorAll('.school-weekday-check, input[name="practiceFormat"]').forEach((input) => {
+    input.addEventListener('change', onSchoolChange);
+  });
+  els.calendarMount.addEventListener('click', handleCalendarDayClick);
 }
 
 
@@ -181,6 +246,9 @@ function saveAppData() {
     periodStart: state.periodStart || null,
     periodEnd: state.periodEnd || null,
     totalHoursResult: Number(state.totalHoursResult || 0),
+    school: state.school,
+    schoolDays: Array.isArray(state.schoolDays) ? state.schoolDays : [],
+    schoolMilestone: state.schoolMilestone || null,
   };
   persistStoredState(payload);
 }
@@ -218,6 +286,17 @@ function loadAppData() {
     : [0, 1, 2, 3, 4, 5, 6];
   applySelectedWeekdaysToUi();
   updateScheduleInputModeUi();
+
+  if (payload.school && typeof payload.school === 'object') {
+    state.school = { ...defaultSchoolState(), ...payload.school };
+    if (!Array.isArray(state.school.nonSchool)) state.school.nonSchool = [];
+    if (!state.school.overrides || typeof state.school.overrides !== 'object') state.school.overrides = {};
+    if (!Array.isArray(state.school.weekdays)) state.school.weekdays = [1, 2, 3, 4, 5];
+    if (!PRACTICE_FORMATS[state.school.format]) state.school.format = 'concurrent';
+  }
+  state.schoolDays = Array.isArray(payload.schoolDays) ? payload.schoolDays : [];
+  state.schoolMilestone = payload.schoolMilestone || null;
+  rebuildDaySets();
 }
 
 function getSelectedWeekdays() {
@@ -354,9 +433,12 @@ function syncEndDateMinimum() {
 }
 
 function renderLegend() {
-  els.calendarLegend.innerHTML = legendItems.map((item) => (
-    `<span><i class="swatch" style="background:${item.color}"></i>${item.label}</span>`
-  )).join('');
+  els.calendarLegend.innerHTML = legendItems
+    .filter((item) => !item.schoolOnly || schoolActive())
+    .filter((item) => item.className !== 'both' || state.school.format === 'concurrent')
+    .map((item) => (
+      `<span><i class="swatch ${item.swatchClass || ''}" style="${item.color ? `background:${item.color}` : ''}"></i>${item.label}</span>`
+    )).join('');
 }
 
 function updateQuotaPanelVisibility() {
@@ -456,9 +538,9 @@ function refreshBlockList() {
 function getVisibleBlocksForSidebar() {
   if (!state.blocks.length) return [];
 
-  const hasCalculatedPeriod = state.phaseDays.length && state.endDate;
-  const visible = hasCalculatedPeriod
-    ? state.blocks.filter((block) => !block.automatic || (block.start <= (state.periodEnd || state.endDate) && block.end >= (state.periodStart || state.phaseDays[0])))
+  const range = state.phaseDays.length && state.endDate ? getOverallRange() : null;
+  const visible = range
+    ? state.blocks.filter((block) => !block.automatic || (block.start <= range.end && block.end >= range.start))
     : state.blocks.filter((block) => !block.automatic);
 
   return visible.map((block, index) => ({ block, index: state.blocks.indexOf(block) }));
@@ -576,15 +658,492 @@ async function ensureAutomaticHolidaysForPeriod(startDate, endDate) {
 
 function getBlocksWithinCurrentPeriod() {
   if (!state.phaseDays.length || !state.endDate) return state.blocks.filter((block) => !block.automatic);
-  const start = state.periodStart || state.phaseDays[0];
-  const end = state.periodEnd || state.endDate;
-  return state.blocks.filter((block) => block.start <= end && block.end >= start);
+  const range = getOverallRange();
+  return state.blocks.filter((block) => block.start <= range.end && block.end >= range.start);
 }
 
-async function generateSchedule() {
+/* ===================== ETAPA I - FASE ESCOLAR SENAI ===================== */
+
+function rebuildDaySets() {
+  schoolDaySet = new Set(state.schoolDays);
+  phaseDaySet = new Set(state.phaseDays);
+}
+
+function schoolActive() {
+  return Boolean(state.school && state.school.enabled);
+}
+
+function getSelectedPracticeFormat() {
+  const checked = document.querySelector('input[name="practiceFormat"]:checked');
+  return checked && PRACTICE_FORMATS[checked.value] ? checked.value : 'concurrent';
+}
+
+function applySchoolStateToUi() {
+  const s = state.school;
+  els.schoolEnabled.checked = !!s.enabled;
+  els.schoolStart.value = s.start || '';
+  els.schoolEnd.value = s.end || '';
+  els.schoolTotalHours.value = s.totalHours || '';
+  els.schoolHoursPerDay.value = s.hoursPerDay || 4;
+  els.schoolShift.value = SHIFT_LABELS[s.shift] ? s.shift : 'afternoon';
+  els.schoolTime.value = s.time || '';
+  document.querySelectorAll('.school-weekday-check').forEach((input) => {
+    input.checked = s.weekdays.map(Number).includes(Number(input.value));
+  });
+  const formatRadio = document.querySelector(`input[name="practiceFormat"][value="${s.format}"]`);
+  if (formatRadio) formatRadio.checked = true;
+  refreshNonSchoolList();
+  refreshSchoolPdfStatus();
+  syncSchoolModeUi();
+}
+
+function readSchoolInputs() {
+  const s = state.school;
+  s.enabled = els.schoolEnabled.checked;
+  s.start = els.schoolStart.value || '';
+  s.end = els.schoolEnd.value || '';
+  s.totalHours = els.schoolTotalHours.value === '' ? '' : Number(els.schoolTotalHours.value);
+  s.hoursPerDay = Number(els.schoolHoursPerDay.value || 0) || 0;
+  s.shift = els.schoolShift.value;
+  s.time = (els.schoolTime.value || '').trim();
+  s.format = getSelectedPracticeFormat();
+  s.weekdays = Array.from(document.querySelectorAll('.school-weekday-check:checked'))
+    .map((input) => Number(input.value))
+    .sort((a, b) => a - b);
+}
+
+// Com a Etapa I ativa, o inicio da pratica e calculado (campo somente leitura)
+function syncSchoolModeUi() {
+  const active = schoolActive();
+  els.schoolPanel.classList.toggle('is-disabled', !active);
+  els.practiceFormatPanel.classList.toggle('is-disabled', !active);
+  els.startDate.readOnly = active;
+  els.startDateHint.hidden = !active;
+  updatePracticeStartInfo();
+}
+
+function validateSchoolInputs() {
+  const s = state.school;
+  if (!s.start || !s.end) return 'Etapa I: informe o inicio e o termino das aulas (ou desmarque "Incluir Etapa I no cronograma").';
+  if (s.end < s.start) return 'Etapa I: o termino das aulas nao pode ser anterior ao inicio.';
+  if (s.end > MAX_SUPPORTED_DATE) return `Etapa I: a calculadora esta configurada para datas ate ${MAX_SUPPORTED_DATE}.`;
+  if (!s.weekdays.length) return 'Etapa I: selecione pelo menos um dia da semana com aula.';
+  if (!(s.hoursPerDay > 0)) return 'Etapa I: informe as horas de aula por dia.';
+  if (s.format !== 'subsequent' && !(Number(s.totalHours) > 0)) {
+    return 'Etapa I: informe a carga horaria da fase escolar (ex.: 1000 h). Ela e usada para calcular os 10% que liberam o inicio da pratica.';
+  }
+  return '';
+}
+
+// Ate onde buscar feriados: do inicio das aulas ate uma margem segura apos o fim previsto da pratica
+function getHolidayRangeEnd(hoursPerDay, totalHours) {
+  const s = state.school;
+  let end = s.end;
+  if (getScheduleInputMode() === 'period-to-hours') {
+    const requested = els.endDateInput.value;
+    if (requested && requested > end) end = requested;
+  } else {
+    const requiredDays = Math.max(1, Math.ceil((totalHours || 1) / Math.max(hoursPerDay || 1, 1)));
+    const approx = new Date(`${s.end}T00:00:00`);
+    approx.setDate(approx.getDate() + Math.max(requiredDays * 3, 370));
+    end = fmtDate(approx);
+  }
+  return end > MAX_SUPPORTED_DATE ? MAX_SUPPORTED_DATE : end;
+}
+
+function findNonSchoolForDate(dateStr) {
+  return state.school.nonSchool.find((item) => dateStr >= item.start && dateStr <= item.end) || null;
+}
+
+// Dias de aula: dias da semana marcados entre inicio e termino, sem feriados e periodos sem aula.
+// Ajustes manuais (clique no calendario) tem prioridade.
+function calculateSchoolDays() {
+  const s = state.school;
+  if (!s.enabled) return [];
+  const result = new Set();
+  if (s.start && s.end && s.end >= s.start) {
+    const cursor = new Date(`${s.start}T00:00:00`);
+    const limit = new Date(`${s.end}T00:00:00`);
+    const weekdays = s.weekdays.map(Number);
+    let safe = 0;
+    while (cursor <= limit && safe < 5000) {
+      const key = fmtDate(cursor);
+      const block = findBlockForDate(key);
+      const isHoliday = block && block.type === 'holiday';
+      if (weekdays.includes(cursor.getDay()) && !isHoliday && !findNonSchoolForDate(key)) result.add(key);
+      cursor.setDate(cursor.getDate() + 1);
+      safe += 1;
+    }
+  }
+  Object.entries(s.overrides || {}).forEach(([key, value]) => {
+    if (value === true) result.add(key);
+    if (value === false) result.delete(key);
+  });
+  return Array.from(result).sort();
+}
+
+function getSchoolTotalHours() {
+  const informed = Number(state.school.totalHours || 0);
+  return informed > 0 ? informed : state.schoolDays.length * (state.school.hoursPerDay || 0);
+}
+
+// Inicio da Etapa II conforme o formato escolhido
+function computePracticeStart() {
+  const s = state.school;
+  const days = state.schoolDays;
+  state.schoolMilestone = null;
+  if (!days.length) return null;
+
+  if (s.format === 'subsequent') {
+    return addDays(days[days.length - 1], 1);
+  }
+
+  const threshold = getSchoolTotalHours() * 0.10;
+  let accumulated = 0;
+  for (const day of days) {
+    accumulated += s.hoursPerDay;
+    if (accumulated >= threshold - 1e-9) {
+      state.schoolMilestone = { date: day, hours: Math.round(accumulated * 10) / 10, threshold: Math.round(threshold * 10) / 10 };
+      return addDays(day, 1);
+    }
+  }
+  // Calendario escolar nao alcanca 10% (CH informada maior que as aulas cadastradas)
+  return null;
+}
+
+function addDays(dateStr, amount) {
+  const date = new Date(`${dateStr}T00:00:00`);
+  date.setDate(date.getDate() + amount);
+  return fmtDate(date);
+}
+
+function getSchoolSummary() {
+  const s = state.school;
+  const days = state.schoolDays;
+  const scheduledHours = days.length * (s.hoursPerDay || 0);
+  const totalHours = getSchoolTotalHours();
+  let mismatch = '';
+  if (Number(s.totalHours) > 0 && scheduledHours !== Number(s.totalHours)) {
+    mismatch = `Atencao: os dias de aula do calendario somam ${scheduledHours} h, mas a carga horaria informada da fase escolar e ${s.totalHours} h. Confira o periodo, os dias sem aula ou ajuste os dias clicando no calendario.`;
+  }
+  return {
+    start: days[0] || s.start,
+    end: days[days.length - 1] || s.end,
+    days: days.length,
+    scheduledHours,
+    totalHours,
+    mismatch,
+  };
+}
+
+// No formato dual a pratica ocorre nos dias sem aula; avisa se nao houver nenhum durante a Etapa I
+function getDualWarning() {
+  if (!schoolActive() || state.school.format !== 'dual' || !state.phaseDays.length || !state.schoolDays.length) return '';
+  const schoolEnd = state.schoolDays[state.schoolDays.length - 1];
+  const duringSchool = state.phaseDays.filter((d) => d <= schoolEnd).length;
+  if (duringSchool > 0) return '';
+  return `Formato dual: o cronograma escolar tem aula em todos os dias marcados para a pratica, por isso a pratica so comeca em ${formatDateBR(state.phaseDays[0])}, apos o fim das aulas. No formato dual, as aulas e a pratica devem ocorrer em dias alternados: confira os dias da semana com aula ou os dias considerados para a pratica.`;
+}
+
+function updatePracticeStartInfo() {
+  const box = els.practiceStartInfo;
+  if (!box) return;
+  if (!schoolActive()) {
+    box.hidden = true;
+    return;
+  }
+  const s = state.school;
+  const fmt = PRACTICE_FORMATS[s.format];
+  let text = `<strong>${fmt.label}:</strong> ${fmt.rule.toLowerCase()}.`;
+  if (s.format === 'concurrent') text += ` Turno da pratica: <strong>${OPPOSITE_SHIFT[s.shift] || 'oposto as aulas'}</strong>.`;
+  if (state.phaseDays.length && state.schoolDays.length) {
+    if (state.schoolMilestone && s.format !== 'subsequent') {
+      text += `<br>10% da carga horaria escolar (${state.schoolMilestone.threshold} h) concluidos em <strong>${formatDateBR(state.schoolMilestone.date)}</strong>.`;
+    }
+    text += `<br>Inicio da pratica: <strong>${formatDateBR(state.phaseDays[0])}</strong>.`;
+  } else if (s.format !== 'subsequent' && Number(s.totalHours) > 0) {
+    text += `<br>10% de ${s.totalHours} h = <strong>${Math.round(Number(s.totalHours) * 10) / 100} h</strong> de aula antes do inicio da pratica.`;
+  }
+  const warning = getDualWarning();
+  box.className = `format-info spacing-top${warning ? ' warn' : ''}`;
+  box.innerHTML = warning ? `${text}<br>${escapeHtml(warning)}` : text;
+  box.hidden = false;
+}
+
+function addNonSchoolPeriod() {
+  const start = els.nonSchoolStart.value;
+  if (!start) {
+    alert('Informe a data inicial do periodo sem aula.');
+    return;
+  }
+  const end = els.nonSchoolEnd.value || start;
+  if (end < start) {
+    alert('A data final nao pode ser menor que a data inicial.');
+    return;
+  }
+  state.school.nonSchool.push({
+    start,
+    end,
+    description: (els.nonSchoolDescription.value || '').trim() || 'Sem aula (escola)',
+  });
+  state.school.nonSchool.sort((a, b) => a.start.localeCompare(b.start));
+  els.nonSchoolStart.value = '';
+  els.nonSchoolEnd.value = '';
+  els.nonSchoolDescription.value = '';
+  refreshNonSchoolList();
+  saveAppData();
+}
+
+function refreshNonSchoolList() {
+  const items = state.school.nonSchool;
+  if (!items.length) {
+    els.nonSchoolList.className = 'tag-list empty-state spacing-top';
+    els.nonSchoolList.textContent = 'Nenhum período sem aula cadastrado.';
+    return;
+  }
+  els.nonSchoolList.className = 'tag-list spacing-top';
+  els.nonSchoolList.innerHTML = items.map((item, index) => `
+    <div class="block-item">
+      <div class="block-meta">
+        <strong>${escapeHtml(item.description)}</strong>
+        <small>${formatDateBR(item.start)} ate ${formatDateBR(item.end)}</small>
+      </div>
+      <button class="secondary-btn icon-btn" type="button" data-remove-nonschool="${index}" aria-label="Remover periodo">✕</button>
+    </div>
+  `).join('');
+  els.nonSchoolList.querySelectorAll('[data-remove-nonschool]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.school.nonSchool.splice(Number(button.dataset.removeNonschool), 1);
+      refreshNonSchoolList();
+      saveAppData();
+    });
+  });
+}
+
+// Clique em um dia do calendario: marca/desmarca aula SENAI e recalcula sem buscar feriados de novo
+function handleCalendarDayClick(event) {
+  const cell = event.target.closest('[data-date]');
+  if (!cell || !schoolActive() || !state.phaseDays.length) return;
+  const key = cell.dataset.date;
+  const overrides = state.school.overrides;
+  const currentlySchool = schoolDaySet.has(key);
+  delete overrides[key];
+  const natural = calculateSchoolDays().includes(key);
+  const desired = !currentlySchool;
+  if (desired !== natural) overrides[key] = desired;
+  generateSchedule({ reuseHolidays: true });
+}
+
+/* Periodo total do contrato (Etapa I + Etapa II) */
+function getOverallRange() {
+  const dates = [];
+  const practiceStart = state.periodStart || state.phaseDays[0];
+  const practiceEnd = state.periodEnd || state.endDate || state.phaseDays[state.phaseDays.length - 1];
+  if (practiceStart) dates.push(practiceStart);
+  if (practiceEnd) dates.push(practiceEnd);
+  if (schoolActive() && state.schoolDays.length) dates.push(state.schoolDays[0], state.schoolDays[state.schoolDays.length - 1]);
+  if (!dates.length) return null;
+  dates.sort();
+  return { start: dates[0], end: dates[dates.length - 1] };
+}
+
+/* ---------- PDF da unidade (cronograma da fase escolar) ---------- */
+
+const SCHOOL_PDF_DB = 'fase-pratica-db';
+const SCHOOL_PDF_STORE = 'files';
+const SCHOOL_PDF_KEY = 'school-pdf';
+
+function openSchoolDb() {
+  return new Promise((resolve, reject) => {
+    try {
+      const request = window.indexedDB.open(SCHOOL_PDF_DB, 1);
+      request.onupgradeneeded = () => request.result.createObjectStore(SCHOOL_PDF_STORE);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+async function storeSchoolPdfBytes(bytes) {
+  try {
+    const db = await openSchoolDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(SCHOOL_PDF_STORE, 'readwrite');
+      if (bytes) tx.objectStore(SCHOOL_PDF_STORE).put(bytes, SCHOOL_PDF_KEY);
+      else tx.objectStore(SCHOOL_PDF_STORE).delete(SCHOOL_PDF_KEY);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (error) {
+    console.error('Nao foi possivel guardar o PDF da fase escolar.', error);
+  }
+}
+
+async function readSchoolPdfBytes() {
+  try {
+    const db = await openSchoolDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(SCHOOL_PDF_STORE, 'readonly');
+      const request = tx.objectStore(SCHOOL_PDF_STORE).get(SCHOOL_PDF_KEY);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
+}
+
+function getPdfJs() {
+  const lib = window.pdfjsLib;
+  if (!lib) return null;
+  if (!lib.GlobalWorkerOptions.workerSrc) {
+    lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+  return lib;
+}
+
+async function handleSchoolPdfSelected(event) {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+  if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') {
+    alert('Selecione um arquivo PDF.');
+    return;
+  }
+  els.schoolPdfStatus.textContent = 'Lendo o PDF...';
+  try {
+    const bytes = await file.arrayBuffer();
+    const { pages, text } = await processSchoolPdf(bytes.slice(0));
+    schoolPdfPages = pages;
+    state.school.pdfName = file.name;
+    state.school.pdfPageCount = pages.length;
+    await storeSchoolPdfBytes(bytes);
+
+    const detected = detectSchoolInfoFromText(text);
+    const found = [];
+    if (detected.start && detected.end) {
+      els.schoolStart.value = detected.start;
+      els.schoolEnd.value = detected.end;
+      found.push(`período ${formatDateBR(detected.start)} a ${formatDateBR(detected.end)}`);
+    }
+    if (detected.totalHours && !els.schoolTotalHours.value) {
+      els.schoolTotalHours.value = detected.totalHours;
+      found.push(`carga horária ${detected.totalHours} h`);
+    }
+    readSchoolInputs();
+    let message;
+    if (found.length) message = ` Identificado: ${found.join(' e ')} — confira.`;
+    else if (!text.trim()) message = ' O PDF é uma imagem digitalizada: informe abaixo o período e a carga horária das aulas.';
+    else message = ' Não foi possível identificar as datas: informe abaixo o período e a carga horária das aulas.';
+    saveAppData();
+    refreshSchoolPdfStatus(message);
+  } catch (error) {
+    console.error(error);
+    alert(`Nao foi possivel ler o PDF. ${error && error.message ? error.message : ''}`.trim());
+    refreshSchoolPdfStatus();
+  }
+}
+
+async function processSchoolPdf(bytes) {
+  const pdfjs = getPdfJs();
+  if (!pdfjs) throw new Error('A biblioteca de leitura de PDF nao foi carregada. Verifique sua conexao.');
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise;
+  const pages = [];
+  let text = '';
+  for (let number = 1; number <= doc.numPages; number += 1) {
+    const page = await doc.getPage(number);
+    const viewport1 = page.getViewport({ scale: 1 });
+    const scale = Math.min(2.2, 1800 / Math.max(viewport1.width, viewport1.height));
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    pages.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), width: viewport1.width, height: viewport1.height });
+    try {
+      const content = await page.getTextContent();
+      text += ` ${content.items.map((item) => item.str).join(' ')}`;
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  return { pages, text };
+}
+
+// Quando o PDF possui texto: identifica periodo (datas dd/mm/aaaa) e carga horaria ("1000 horas")
+function detectSchoolInfoFromText(text) {
+  const result = {};
+  if (!text || !text.trim()) return result;
+  const cleaned = text.replace(/Gerado[^0-9]*\d{2}\/\d{2}\/\d{4}/gi, ' ');
+  const dates = [];
+  const regex = /\b(\d{2})\/(\d{2})\/(\d{4})\b/g;
+  let match;
+  while ((match = regex.exec(cleaned))) {
+    const [, d, m, y] = match;
+    if (Number(m) >= 1 && Number(m) <= 12 && Number(d) >= 1 && Number(d) <= 31 && Number(y) >= 2000) dates.push(`${y}-${m}-${d}`);
+  }
+  if (dates.length >= 2) {
+    dates.sort();
+    result.start = dates[0];
+    result.end = dates[dates.length - 1];
+  }
+  const hours = cleaned.match(/(\d{2,4})\s*(?:horas|h)\b/i);
+  if (hours && Number(hours[1]) >= 100) result.totalHours = Number(hours[1]);
+  return result;
+}
+
+async function restoreSchoolPdf() {
+  if (!state.school.pdfName) return;
+  const bytes = await readSchoolPdfBytes();
+  if (!bytes) {
+    refreshSchoolPdfStatus(' Selecione o arquivo novamente para anexá-lo ao PDF.');
+    return;
+  }
+  try {
+    const { pages } = await processSchoolPdf(bytes);
+    schoolPdfPages = pages;
+    refreshSchoolPdfStatus();
+  } catch (error) {
+    console.error(error);
+    refreshSchoolPdfStatus(' Selecione o arquivo novamente para anexá-lo ao PDF.');
+  }
+}
+
+async function removeSchoolPdf() {
+  schoolPdfPages = [];
+  state.school.pdfName = '';
+  state.school.pdfPageCount = 0;
+  await storeSchoolPdfBytes(null);
+  refreshSchoolPdfStatus();
+  saveAppData();
+}
+
+function refreshSchoolPdfStatus(extra = '') {
+  const drop = els.schoolPdf.closest('.file-drop');
+  const name = state.school.pdfName;
+  if (name) {
+    const count = schoolPdfPages.length || state.school.pdfPageCount || 0;
+    els.schoolPdfStatus.textContent = `${name} • ${count} página(s).${extra}`;
+    drop.classList.add('has-file');
+    els.schoolPdfActions.style.display = '';
+  } else {
+    els.schoolPdfStatus.textContent = 'Clique para selecionar o arquivo PDF emitido pela unidade.';
+    drop.classList.remove('has-file');
+    els.schoolPdfActions.style.display = 'none';
+  }
+}
+
+async function generateSchedule(options) {
+  const reuseHolidays = Boolean(options && options.reuseHolidays === true);
   state.selectedWeekdays = getSelectedWeekdays();
   state.scheduleInputMode = getScheduleInputMode();
-  const startDate = els.startDate.value;
+  let startDate = els.startDate.value;
   const hoursPerDay = Number(els.hoursPerDay.value || 0);
   const informedTotalHours = Number(els.totalHours.value || 0);
   const mode = state.uiMode === 'advanced' ? els.calculationMode.value : 'automatic';
@@ -600,6 +1159,42 @@ async function generateSchedule() {
   if (hoursPerDay <= 0) {
     alert('Informe horas por dia maiores que zero.');
     return;
+  }
+
+  // ===== Etapa I: fase escolar SENAI define o inicio da Etapa II =====
+  readSchoolInputs();
+  const schoolMode = schoolActive();
+  if (schoolMode) {
+    const validation = validateSchoolInputs();
+    if (validation) {
+      alert(validation);
+      return;
+    }
+    if (!reuseHolidays) {
+      await ensureAutomaticHolidaysForPeriod(state.school.start, getHolidayRangeEnd(hoursPerDay, informedTotalHours));
+    }
+    state.schoolDays = calculateSchoolDays();
+    schoolDaySet = new Set(state.schoolDays);
+    if (!state.schoolDays.length) {
+      alert('Nenhum dia de aula foi encontrado na Etapa I com as datas e dias da semana informados.');
+      return;
+    }
+    const autoStart = computePracticeStart();
+    if (!autoStart) {
+      alert('Nao foi possivel calcular o inicio da fase pratica a partir da fase escolar.');
+      return;
+    }
+    if (autoStart > MAX_SUPPORTED_DATE) {
+      alert(`O inicio calculado da fase pratica ultrapassa ${MAX_SUPPORTED_DATE}.`);
+      return;
+    }
+    startDate = autoStart;
+    els.startDate.value = autoStart;
+    syncEndDateMinimum();
+  } else {
+    state.schoolDays = [];
+    state.schoolMilestone = null;
+    schoolDaySet = new Set();
   }
 
   let phaseDays = [];
@@ -620,7 +1215,7 @@ async function generateSchedule() {
       return;
     }
 
-    await ensureAutomaticHolidaysForPeriod(startDate, requestedEndDate);
+    if (!schoolMode && !reuseHolidays) await ensureAutomaticHolidaysForPeriod(startDate, requestedEndDate);
     phaseDays = calculateDaysWithinPeriod(startDate, requestedEndDate);
     if (!phaseDays.length) {
       alert('O periodo informado nao possui dias validos de pratica com as regras selecionadas.');
@@ -635,7 +1230,7 @@ async function generateSchedule() {
       alert('Informe a carga horaria total maior que zero.');
       return;
     }
-    await ensureAutomaticHolidays(startDate, informedTotalHours, hoursPerDay);
+    if (!schoolMode && !reuseHolidays) await ensureAutomaticHolidays(startDate, informedTotalHours, hoursPerDay);
     if (mode === 'monthly-quota') {
       phaseDays = calculateMonthlyQuotaDays(startDate, informedTotalHours, hoursPerDay);
     } else {
@@ -655,16 +1250,30 @@ async function generateSchedule() {
     state.endDate = lastCalculatedDay;
   }
 
+  if (schoolMode) {
+    // Mostra no campo o primeiro dia efetivo de pratica (ex.: pula fim de semana/feriado)
+    els.startDate.value = phaseDays[0];
+    state.periodStart = phaseDays[0];
+    syncEndDateMinimum();
+  }
   state.phaseDays = phaseDays;
+  phaseDaySet = new Set(phaseDays);
   state.totalHoursResult = totalHours;
   state.reportRows = buildMonthlyReport(phaseDays, hoursPerDay);
 
+  renderLegend();
   renderCalendar();
   refreshBlockList();
   renderReport(hoursPerDay, totalHours, mode);
   updateSummary(hoursPerDay, totalHours);
-  switchTab('calendar');
+  updatePracticeStartInfo();
+  if (!reuseHolidays) switchTab('calendar');
   saveAppData();
+
+  if (schoolMode && !reuseHolidays) {
+    const warning = getDualWarning();
+    if (warning) alert(warning);
+  }
 }
 
 function calculateDaysWithinPeriod(startDate, endDate) {
@@ -744,7 +1353,10 @@ function isValidPracticeDay(date) {
   const day = date.getDay();
   const selected = Array.isArray(state.selectedWeekdays) && state.selectedWeekdays.length ? state.selectedWeekdays : [0, 1, 2, 3, 4, 5, 6];
   if (!selected.includes(day)) return false;
-  return !findBlockForDate(fmtDate(date));
+  const key = fmtDate(date);
+  // Subsequente e dual: dia de aula nao tem pratica. Concomitante: turno oposto (mesmo dia permitido).
+  if (schoolActive() && state.school.format !== 'concurrent' && schoolDaySet.has(key)) return false;
+  return !findBlockForDate(key);
 }
 
 function findBlockForDate(dateStr) {
@@ -758,7 +1370,9 @@ function renderCalendar() {
     return;
   }
 
-  const grouped = groupMonthsBetween(state.periodStart || state.phaseDays[0], state.periodEnd || state.phaseDays[state.phaseDays.length - 1]);
+  const range = getOverallRange();
+  const grouped = groupMonthsBetween(range.start, range.end);
+  els.calendarHint.style.display = schoolActive() ? '' : 'none';
   els.calendarMount.className = 'calendar-mount';
   els.calendarMount.innerHTML = Object.entries(grouped).map(([year, months]) => `
     <section class="calendar-year">
@@ -775,7 +1389,10 @@ function renderMonthCard({ year, month }) {
   const startOffset = first.getDay();
   const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
   const monthlyCount = state.phaseDays.filter((date) => date.startsWith(monthPrefix)).length;
+  const schoolCount = schoolActive() ? state.schoolDays.filter((date) => date.startsWith(monthPrefix)).length : 0;
   const configuredQuota = Number(state.monthlyQuotas[monthPrefix] || 0);
+  const overrides = state.school.overrides || {};
+  const milestoneDate = schoolActive() && state.schoolMilestone ? state.schoolMilestone.date : null;
 
   let daysHtml = '';
   for (let i = 0; i < startOffset; i += 1) daysHtml += '<div class="day muted"></div>';
@@ -783,37 +1400,90 @@ function renderMonthCard({ year, month }) {
   for (let day = 1; day <= daysInMonth; day += 1) {
     const current = new Date(year, month, day);
     const key = fmtDate(current);
-    const block = findBlockForDate(key);
-    const isPhase = state.phaseDays.includes(key);
+    const status = getDayStatus(key);
     const classes = ['day'];
     if (current.getDay() === 0 || current.getDay() === 6) classes.push('weekend');
-    if (isPhase) classes.push('phase');
-    if (block) classes.push(`block-${block.type}`);
-    const title = block ? `${friendlyBlockType(block.type)} - ${block.description}` : (isPhase ? 'Dia de pratica' : '');
-    daysHtml += `<div class="${classes.join(' ')}" title="${escapeHtml(title)}">${day}</div>`;
+    if (status.isPhase) classes.push('phase');
+    if (status.isSchool) classes.push('school');
+    if (status.block && !status.isSchool && !status.isPhase) classes.push(`block-${status.block.type}`);
+    if (schoolActive() && Object.prototype.hasOwnProperty.call(overrides, key)) classes.push('override');
+    let title = status.title;
+    if (key === milestoneDate) {
+      classes.push('milestone');
+      title = `${title} • 10% da carga horaria escolar concluidos`;
+    }
+    daysHtml += `<div class="${classes.join(' ')}" data-date="${key}" title="${escapeHtml(title)}">${day}</div>`;
   }
 
-  const metaText = state.uiMode === 'advanced' && els.calculationMode.value === 'monthly-quota'
-    ? `Dias no mes: <strong>${monthlyCount}</strong> • previsto: <strong>${configuredQuota}</strong>`
-    : `Dias no mes: <strong>${monthlyCount}</strong>`;
+  const quotaText = state.uiMode === 'advanced' && els.calculationMode.value === 'monthly-quota'
+    ? ` • previsto: <strong>${configuredQuota}</strong>`
+    : '';
+  const metaText = schoolActive()
+    ? `Etapa I: <strong>${schoolCount}</strong> aula(s) • Etapa II: <strong>${monthlyCount}</strong> dia(s)${quotaText}`
+    : `Dias no mes: <strong>${monthlyCount}</strong>${quotaText}`;
 
   return `
     <article class="month-card">
       <header>${monthNames[month]} ${year}</header>
       <div class="month-meta">${metaText}</div>
       <div class="weekdays">${weekdayNames.map((d) => `<div>${d}</div>`).join('')}</div>
-      <div class="days">${daysHtml}</div>
+      <div class="days${schoolActive() ? ' clickable' : ''}">${daysHtml}</div>
     </article>
   `;
+}
+
+function getDayStatus(key) {
+  const block = findBlockForDate(key);
+  const isPhase = phaseDaySet.has(key);
+  const isSchool = schoolActive() && schoolDaySet.has(key);
+  const nonSchool = schoolActive() ? findNonSchoolForDate(key) : null;
+  let title = '';
+  if (isSchool && isPhase) title = 'Etapa I (aula SENAI) + Etapa II (pratica na empresa, turno oposto)';
+  else if (isSchool) title = 'Etapa I - Fase escolar SENAI';
+  else if (isPhase) title = 'Etapa II - Fase pratica EMPRESA';
+  else if (block) title = `${friendlyBlockType(block.type)} - ${block.description}`;
+  else if (nonSchool) title = `Sem aula: ${nonSchool.description}`;
+  return { block, isPhase, isSchool, nonSchool, title };
 }
 
 function renderReport(hoursPerDay, totalHours, mode) {
   const filler = escapeHtml((els.fillerName.value || '').trim() || 'Nao informado');
   const client = escapeHtml((els.clientName.value || '').trim() || 'Nao informado');
   const unit = escapeHtml((els.unitName.value || '').trim() || 'Nao informada');
-  const rows = state.reportRows.map((row) => `
-    <tr><td>${escapeHtml(row.month)}</td><td>${row.days}</td><td>${row.hours}</td></tr>
-  `).join('');
+  const withSchool = schoolActive();
+  const rows = state.reportRows.map((row) => (withSchool
+    ? `<tr><td>${escapeHtml(row.month)}</td><td>${row.schoolDays || 0}</td><td>${row.schoolHours || 0}</td><td>${row.days}</td><td>${row.hours}</td></tr>`
+    : `<tr><td>${escapeHtml(row.month)}</td><td>${row.days}</td><td>${row.hours}</td></tr>`
+  )).join('');
+  const tableHead = withSchool
+    ? '<tr><th>Mes</th><th>Etapa I - aulas (dias)</th><th>Etapa I (h)</th><th>Etapa II - pratica (dias)</th><th>Etapa II (h)</th></tr>'
+    : '<tr><th>Mes</th><th>Dias</th><th>Horas</th></tr>';
+  let schoolHtml = '';
+  if (withSchool) {
+    const sc = state.school;
+    const info = getSchoolSummary();
+    const fmt = PRACTICE_FORMATS[sc.format];
+    const warning = getDualWarning();
+    schoolHtml = `
+      <h4><span class="phase-tag school">Etapa I - Fase escolar SENAI</span></h4>
+      <div class="report-header-grid">
+        <div><strong>Periodo das aulas:</strong> ${formatDateBR(info.start)} ate ${formatDateBR(info.end)}</div>
+        <div><strong>Dias de aula:</strong> ${info.days} dias (${info.scheduledHours} h no calendario)</div>
+        <div><strong>Carga horaria da fase escolar:</strong> ${info.totalHours} h</div>
+        <div><strong>Aulas:</strong> ${sc.hoursPerDay} h/dia • ${SHIFT_LABELS[sc.shift] || ''}${sc.time ? ` (${escapeHtml(sc.time)})` : ''}</div>
+        <div><strong>Cronograma da unidade:</strong> ${sc.pdfName ? `${escapeHtml(sc.pdfName)} (anexado ao PDF)` : 'Nao anexado'}</div>
+        ${state.schoolMilestone ? `<div><strong>10% da carga horaria escolar:</strong> ${state.schoolMilestone.hours} h concluidas em ${formatDateBR(state.schoolMilestone.date)}</div>` : ''}
+      </div>
+      ${info.mismatch ? `<p class="report-note">${escapeHtml(info.mismatch)}</p>` : ''}
+      <h4><span class="phase-tag practice">Etapa II - Fase pratica EMPRESA</span></h4>
+      <div class="report-header-grid">
+        <div><strong>Formato:</strong> ${fmt.label}</div>
+        <div><strong>Regra:</strong> ${fmt.rule}</div>
+        ${sc.format === 'concurrent' ? `<div><strong>Turno da pratica:</strong> ${OPPOSITE_SHIFT[sc.shift] || 'oposto as aulas'}</div>` : ''}
+      </div>
+      ${warning ? `<p class="report-note">${escapeHtml(warning)}</p>` : ''}
+    `;
+  }
   const displayBlocks = getBlocksWithinCurrentPeriod();
   const blocksHtml = displayBlocks.length
     ? `<ul>${displayBlocks.map((block) => `<li>${escapeHtml(block.description)} - ${friendlyBlockType(block.type)} (${formatDateBR(block.start)} ate ${formatDateBR(block.end)})${block.automatic ? ` [automatico${block.holidayScope ? ' - ' + escapeHtml(block.holidayScope) : ''}]` : ''}</li>`).join('')}</ul>`
@@ -821,6 +1491,7 @@ function renderReport(hoursPerDay, totalHours, mode) {
 
   els.reportMount.className = 'report-box';
   els.reportMount.innerHTML = `
+    ${schoolHtml}
     <div class="report-header-grid">
       <div><strong>Responsavel pelas informacoes:</strong> ${filler}</div>
       <div><strong>Empresa:</strong> ${client}</div>
@@ -833,7 +1504,7 @@ function renderReport(hoursPerDay, totalHours, mode) {
     </div>
     <h4>Distribuicao por mes</h4>
     <table>
-      <thead><tr><th>Mes</th><th>Dias</th><th>Horas</th></tr></thead>
+      <thead>${tableHead}</thead>
       <tbody>${rows}</tbody>
     </table>
     <h4>Bloqueios cadastrados</h4>
@@ -848,23 +1519,29 @@ function updateSummary(hoursPerDay = Number(els.hoursPerDay.value || 0), totalHo
   const end = state.endDate ? formatDateBR(state.endDate) : '--';
   els.sumEndDate.textContent = end;
   els.heroTotalDias.textContent = state.phaseDays.length || 0;
+  els.heroSchoolDays.textContent = schoolActive() && state.schoolDays.length ? state.schoolDays.length : '--';
   els.heroTotalHours.textContent = `${totalHours || 0} h`;
   els.heroDataFim.textContent = end;
 }
 
 function buildMonthlyReport(days, hoursPerDay) {
   const map = new Map();
-  days.forEach((date) => {
-    const key = date.slice(0, 7);
-    map.set(key, (map.get(key) || 0) + 1);
-  });
+  const ensure = (key) => {
+    if (!map.has(key)) map.set(key, { practice: 0, school: 0 });
+    return map.get(key);
+  };
+  days.forEach((date) => { ensure(date.slice(0, 7)).practice += 1; });
+  if (schoolActive()) state.schoolDays.forEach((date) => { ensure(date.slice(0, 7)).school += 1; });
+  const schoolHoursPerDay = Number(state.school.hoursPerDay || 0);
 
-  return Array.from(map.entries()).map(([key, count]) => {
+  return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([key, counts]) => {
     const [year, month] = key.split('-').map(Number);
     return {
       month: `${monthNames[month - 1]} ${year}`,
-      days: count,
-      hours: count * hoursPerDay,
+      days: counts.practice,
+      hours: counts.practice * hoursPerDay,
+      schoolDays: counts.school,
+      schoolHours: counts.school * schoolHoursPerDay,
     };
   });
 }
@@ -904,10 +1581,11 @@ async function exportPdf() {
     const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const senaiLogoDataUrl = await getSenaiLogoDataUrl();
     appendCalendarPagesLandscape(pdf, senaiLogoDataUrl);
+    appendSchoolPdfAnnex(pdf);
 
     const safeFiller = sanitizeFilePart(els.fillerName.value || 'ficha');
     const safeClient = sanitizeFilePart(els.clientName.value || 'cliente');
-    pdf.save(`calendario-fase-pratica-grade-${safeFiller}-${safeClient}.pdf`);
+    pdf.save(`${schoolActive() ? 'cronograma-contrato-etapas' : 'calendario-fase-pratica-grade'}-${safeFiller}-${safeClient}.pdf`);
   } catch (error) {
     console.error(error);
     alert(`Nao foi possivel gerar o PDF. ${error && error.message ? error.message : ''}`.trim());
@@ -919,7 +1597,8 @@ async function exportPdf() {
 
 
 function appendCalendarPagesLandscape(pdf, senaiLogoDataUrl) {
-  const grouped = groupMonthsBetween(state.periodStart || state.phaseDays[0], state.periodEnd || state.phaseDays[state.phaseDays.length - 1]);
+  const range = getOverallRange();
+  const grouped = groupMonthsBetween(range.start, range.end);
   const months = [];
   Object.entries(grouped).forEach(([year, items]) => {
     items.forEach((item) => months.push({ year: Number(year), month: item.month }));
@@ -931,7 +1610,7 @@ function appendCalendarPagesLandscape(pdf, senaiLogoDataUrl) {
   const marginX = 8;
   const marginTop = 8;
   const marginBottom = 8;
-  const headerH = 14;
+  const headerH = schoolActive() ? 17 : 14;
   const footerH = 6;
   const gapX = 4;
   const gapY = 4;
@@ -956,6 +1635,7 @@ function appendCalendarPagesLandscape(pdf, senaiLogoDataUrl) {
     drawMonthCalendarPdfCompact(pdf, monthInfo, x, y, cardW, cardH);
   });
 
+  if (schoolActive()) appendContractSummaryPage(pdf, senaiLogoDataUrl);
   appendLandscapeBlockSummary(pdf, senaiLogoDataUrl);
 }
 
@@ -969,14 +1649,260 @@ function drawLandscapeCalendarHeader(pdf, logoDataUrl) {
   pdf.setTextColor(17, 24, 39);
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(14);
-  pdf.text('Calendario da Fase Pratica', pageWidth / 2, 7.5, { align: 'center' });
+  const withSchool = schoolActive();
+  pdf.text(withSchool ? 'Cronograma do Contrato de Aprendizagem' : 'Calendario da Fase Pratica', pageWidth / 2, 7.5, { align: 'center' });
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8.5);
-  const periodStart = (state.periodStart || state.phaseDays[0]) ? formatDateBR(state.periodStart || state.phaseDays[0]) : '--';
-  const periodEnd = (state.periodEnd || state.endDate) ? formatDateBR(state.periodEnd || state.endDate) : '--';
-  pdf.text(`${periodStart} ate ${periodEnd}`, pageWidth / 2, 12, { align: 'center' });
+  const range = getOverallRange();
+  const periodStart = range ? formatDateBR(range.start) : '--';
+  const periodEnd = range ? formatDateBR(range.end) : '--';
+  const client = (els.clientName.value || '').trim();
+  const subtitle = withSchool
+    ? `Etapa I - Fase escolar SENAI e Etapa II - Fase prática EMPRESA (${PRACTICE_FORMATS[state.school.format].short}) • ${periodStart} até ${periodEnd}${client ? ` • ${client}` : ''}`
+    : `${periodStart} ate ${periodEnd}`;
+  pdf.text(subtitle, pageWidth / 2, 12, { align: 'center' });
+  if (withSchool) drawPdfPhaseLegend(pdf, pageWidth - 8, 4);
   pdf.setDrawColor(209, 213, 219);
   pdf.line(8, 15, pageWidth - 8, 15);
+  if (withSchool) drawPdfBlockLegend(pdf, 8, 19.5);
+}
+
+// Legenda das etapas (canto superior direito)
+function drawPdfPhaseLegend(pdf, rightX, topY) {
+  const items = [
+    { label: 'Etapa I - Fase escolar SENAI', type: 'school' },
+    { label: 'Etapa II - Fase prática EMPRESA', type: 'practice' },
+  ];
+  if (state.school.format === 'concurrent') items.push({ label: 'Etapas I e II (turnos opostos)', type: 'both' });
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(6.6);
+  const box = 3;
+  let y = topY - 2;
+  items.forEach((item) => {
+    const textW = pdf.getTextWidth(item.label);
+    const x = rightX - textW - box - 1.4;
+    drawPhaseSwatch(pdf, item.type, x, y, box, box);
+    pdf.setDrawColor(148, 163, 184);
+    pdf.rect(x, y, box, box);
+    pdf.setTextColor(30, 41, 59);
+    pdf.text(item.label, x + box + 1.4, y + 2.4);
+    y += 3.5;
+  });
+}
+
+// Legenda secundaria (feriados/bloqueios e marcador dos 10%)
+function drawPdfBlockLegend(pdf, x, y) {
+  const items = [
+    ['Feriado', pdfBlockFillColor('holiday')],
+    ['Recesso', pdfBlockFillColor('recess')],
+    ['Folga administrativa', pdfBlockFillColor('admin-leave')],
+    ['Ação pedagógica', pdfBlockFillColor('training')],
+    ['Fim de semana / sem atividade', PDF_COLORS.weekend],
+  ];
+  let cursorX = x;
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(7);
+  items.forEach(([label, color]) => {
+    pdf.setFillColor(color[0], color[1], color[2]);
+    pdf.setDrawColor(203, 213, 225);
+    pdf.rect(cursorX, y - 2.6, 3, 3, 'FD');
+    pdf.setTextColor(71, 85, 105);
+    pdf.text(label, cursorX + 4, y);
+    cursorX += pdf.getTextWidth(label) + 9;
+  });
+  if (state.school.format !== 'subsequent' && state.schoolMilestone) {
+    pdf.setFont('helvetica', 'bold');
+    pdf.setTextColor(180, 83, 9);
+    pdf.text('10%', cursorX, y);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setTextColor(71, 85, 105);
+    pdf.text(`= dia em que se completam 10% da carga horária escolar (${formatDateBR(state.schoolMilestone.date)})`, cursorX + pdf.getTextWidth('10%') + 1.5, y);
+  }
+}
+
+// Preenche uma area conforme a etapa: escolar, pratica ou ambas (diagonal)
+function drawPhaseSwatch(pdf, type, x, y, w, h) {
+  const school = PDF_COLORS.school;
+  const practice = PDF_COLORS.practice;
+  if (type === 'school') {
+    pdf.setFillColor(school[0], school[1], school[2]);
+    pdf.rect(x, y, w, h, 'F');
+  } else if (type === 'practice') {
+    pdf.setFillColor(practice[0], practice[1], practice[2]);
+    pdf.rect(x, y, w, h, 'F');
+  } else if (type === 'both') {
+    pdf.setFillColor(school[0], school[1], school[2]);
+    pdf.triangle(x, y, x + w, y, x, y + h, 'F');
+    pdf.setFillColor(practice[0], practice[1], practice[2]);
+    pdf.triangle(x + w, y, x + w, y + h, x, y + h, 'F');
+  }
+}
+
+// Pagina com os dados das duas etapas e a distribuicao mensal
+function appendContractSummaryPage(pdf, senaiLogoDataUrl) {
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const marginX = 10;
+  const s = state.school;
+  const info = getSchoolSummary();
+  const fmt = PRACTICE_FORMATS[s.format];
+  const hoursPerDay = Number(els.hoursPerDay.value || 0);
+  const totalHours = Number(state.totalHoursResult || els.totalHours.value || 0);
+
+  pdf.addPage('a4', 'landscape');
+  drawLandscapeSummaryHeader(pdf, senaiLogoDataUrl, 'Resumo do contrato - Etapas I e II');
+  drawLandscapeCalendarFooter(pdf, marginX, pageHeight - 4);
+
+  const filler = (els.fillerName.value || '').trim() || 'Não informado';
+  const client = (els.clientName.value || '').trim() || 'Não informado';
+  const unit = (els.unitName.value || '').trim() || 'Não informada';
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(9);
+  pdf.setTextColor(51, 65, 85);
+  pdf.text(`Empresa: ${client}   •   Unidade SENAI: ${unit}   •   Responsável: ${filler}`, marginX, 21);
+
+  const schoolLines = [
+    `Período: ${formatDateBR(info.start)} a ${formatDateBR(info.end)}`,
+    `Carga horária da fase escolar: ${info.totalHours} h`,
+    `Dias de aula: ${info.days} (${info.scheduledHours} h no calendário)`,
+    `Aulas: ${s.hoursPerDay} h/dia • turno ${(SHIFT_LABELS[s.shift] || '').toLowerCase()}${s.time ? ` (${s.time})` : ''}`,
+    `Cronograma da unidade: ${s.pdfName ? 'anexo ao final deste documento' : 'não anexado'}`,
+  ];
+  const practiceLines = [
+    `Formato: ${fmt.label}`,
+    `Regra: ${fmt.rule}`,
+  ];
+  if (s.format !== 'subsequent' && state.schoolMilestone) {
+    practiceLines.push(`10% da CH escolar (${state.schoolMilestone.threshold} h) concluídos em ${formatDateBR(state.schoolMilestone.date)}`);
+  }
+  practiceLines.push(
+    `Período: ${formatDateBR(state.periodStart || state.phaseDays[0])} a ${formatDateBR(state.periodEnd || state.endDate)}`,
+    `Total: ${state.phaseDays.length} dias / ${totalHours} h • ${hoursPerDay} h/dia${s.format === 'concurrent' ? ` • turno ${(OPPOSITE_SHIFT[s.shift] || 'oposto').toLowerCase()}` : ''}`,
+    `Dias considerados: ${formatSelectedWeekdays()}`,
+  );
+  const boxes = [
+    { title: 'ETAPA I - FASE ESCOLAR SENAI', type: 'school', text: PDF_COLORS.schoolText, lines: schoolLines },
+    { title: 'ETAPA II - FASE PRÁTICA EMPRESA', type: 'practice', text: PDF_COLORS.practiceText, lines: practiceLines },
+  ];
+  const gap = 8;
+  const boxW = (pageWidth - marginX * 2 - gap) / 2;
+  const boxY = 25;
+  const boxH = 40;
+  boxes.forEach((box, i) => {
+    const x = marginX + i * (boxW + gap);
+    pdf.setDrawColor(203, 213, 225);
+    pdf.setFillColor(255, 255, 255);
+    pdf.roundedRect(x, boxY, boxW, boxH, 2, 2, 'FD');
+    drawPhaseSwatch(pdf, box.type, x, boxY, boxW, 7);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(10);
+    pdf.setTextColor(box.text[0], box.text[1], box.text[2]);
+    pdf.text(box.title, x + 3, boxY + 5);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8.4);
+    pdf.setTextColor(31, 41, 55);
+    box.lines.forEach((line, li) => {
+      pdf.text(pdf.splitTextToSize(line, boxW - 6)[0], x + 3, boxY + 12 + li * 4.6);
+    });
+  });
+
+  let y = boxY + boxH + 6;
+  const notes = [info.mismatch, getDualWarning()].filter(Boolean);
+  notes.forEach((note) => {
+    const lines = pdf.splitTextToSize(note, pageWidth - marginX * 2 - 6);
+    pdf.setFillColor(254, 243, 199);
+    pdf.rect(marginX, y - 3.5, pageWidth - marginX * 2, lines.length * 4 + 3, 'F');
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8.2);
+    pdf.setTextColor(120, 53, 15);
+    pdf.text(lines, marginX + 3, y);
+    y += lines.length * 4 + 5;
+  });
+
+  y += 3;
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(10.5);
+  pdf.setTextColor(17, 24, 39);
+  pdf.text('Distribuição por mês', marginX, y);
+  y += 3;
+
+  const cols = [['Mês', 60, null], ['Etapa I - aulas (dias)', 45, 'school'], ['Etapa I (horas)', 45, 'school'], ['Etapa II - prática (dias)', 45, 'practice'], ['Etapa II (horas)', 45, 'practice']];
+  const rowH = 5.4;
+  const drawHead = (yy) => {
+    let cx = marginX;
+    cols.forEach(([label, w, type]) => {
+      if (type) drawPhaseSwatch(pdf, type, cx, yy, w, rowH);
+      else { pdf.setFillColor(241, 245, 249); pdf.rect(cx, yy, w, rowH, 'F'); }
+      pdf.setDrawColor(203, 213, 225);
+      pdf.rect(cx, yy, w, rowH, 'S');
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(8.2);
+      pdf.setTextColor(30, 41, 59);
+      pdf.text(label, cx + 2, yy + 3.8);
+      cx += w;
+    });
+  };
+  drawHead(y);
+  y += rowH;
+
+  const totals = { sd: 0, sh: 0, pd: 0, ph: 0 };
+  const allRows = state.reportRows.map((row) => {
+    totals.sd += row.schoolDays || 0; totals.sh += row.schoolHours || 0;
+    totals.pd += row.days; totals.ph += row.hours;
+    return [row.month, row.schoolDays || 0, row.schoolHours || 0, row.days, row.hours];
+  });
+  allRows.push(['Total', totals.sd, totals.sh, totals.pd, totals.ph]);
+  allRows.forEach((values, ri) => {
+    if (y + rowH > pageHeight - 10) {
+      pdf.addPage('a4', 'landscape');
+      drawLandscapeSummaryHeader(pdf, senaiLogoDataUrl, 'Resumo do contrato - Etapas I e II');
+      drawLandscapeCalendarFooter(pdf, marginX, pageHeight - 4);
+      y = 22;
+      drawHead(y);
+      y += rowH;
+    }
+    const isTotal = ri === allRows.length - 1;
+    let cx = marginX;
+    cols.forEach(([, w], ci) => {
+      pdf.setFillColor(isTotal ? 241 : 255, isTotal ? 245 : 255, isTotal ? 249 : 255);
+      pdf.setDrawColor(226, 232, 240);
+      pdf.rect(cx, y, w, rowH, 'FD');
+      pdf.setFont('helvetica', isTotal ? 'bold' : 'normal');
+      pdf.setFontSize(8.2);
+      pdf.setTextColor(31, 41, 55);
+      pdf.text(String(values[ci]), ci === 0 ? cx + 2 : cx + w - 2, y + 3.8, { align: ci === 0 ? 'left' : 'right' });
+      cx += w;
+    });
+    y += rowH;
+  });
+}
+
+// Anexa as paginas do cronograma da fase escolar (PDF da unidade)
+function appendSchoolPdfAnnex(pdf) {
+  if (!schoolActive() || !schoolPdfPages.length) return;
+  const total = schoolPdfPages.length;
+  schoolPdfPages.forEach((page, index) => {
+    const orientation = page.width > page.height ? 'landscape' : 'portrait';
+    pdf.addPage('a4', orientation);
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 6;
+    const headerH = 7;
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(8.5);
+    const sc = PDF_COLORS.schoolText;
+    pdf.setTextColor(sc[0], sc[1], sc[2]);
+    pdf.text(`ANEXO - Etapa I - Cronograma da fase escolar SENAI (PDF da unidade) - página ${index + 1} de ${total}`, margin, margin + 2.5);
+    const school = PDF_COLORS.school;
+    pdf.setFillColor(school[0], school[1], school[2]);
+    pdf.rect(margin, margin + 4, pageWidth - margin * 2, 1, 'F');
+    const availW = pageWidth - margin * 2;
+    const availH = pageHeight - margin * 2 - headerH;
+    const ratio = Math.min(availW / page.width, availH / page.height);
+    const w = page.width * ratio;
+    const h = page.height * ratio;
+    pdf.addImage(page.dataUrl, 'JPEG', (pageWidth - w) / 2, margin + headerH + (availH - h) / 2, w, h, undefined, 'FAST');
+  });
 }
 
 function drawLandscapeCalendarFooter(pdf, x, y) {
@@ -1002,6 +1928,15 @@ function appendLandscapeBlockSummary(pdf, senaiLogoDataUrl) {
   });
   const automaticBlocks = displayBlocks.filter((block) => block.automatic);
   const manualBlocks = displayBlocks.filter((block) => !block.automatic);
+  if (schoolActive()) {
+    state.school.nonSchool.forEach((item) => manualBlocks.push({
+      type: 'non-school',
+      description: `Sem aula na escola (Etapa I): ${item.description}`,
+      start: item.start,
+      end: item.end,
+    }));
+    manualBlocks.sort((a, b) => a.start.localeCompare(b.start));
+  }
 
   pdf.addPage('a4', 'landscape');
   drawLandscapeSummaryHeader(pdf, senaiLogoDataUrl);
@@ -1068,7 +2003,7 @@ function appendLandscapeBlockSummary(pdf, senaiLogoDataUrl) {
   drawColumn('Bloqueios manuais', manualBlocks, marginX + columnWidth + columnGap, topY);
 }
 
-function drawLandscapeSummaryHeader(pdf, logoDataUrl) {
+function drawLandscapeSummaryHeader(pdf, logoDataUrl, title = 'Resumo de feriados e bloqueios') {
   const pageWidth = pdf.internal.pageSize.getWidth();
   pdf.setFillColor(255, 255, 255);
   pdf.rect(0, 0, pageWidth, 18, 'F');
@@ -1078,11 +2013,12 @@ function drawLandscapeSummaryHeader(pdf, logoDataUrl) {
   pdf.setTextColor(17, 24, 39);
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(14);
-  pdf.text('Resumo de feriados e bloqueios', pageWidth / 2, 8, { align: 'center' });
+  pdf.text(title, pageWidth / 2, 8, { align: 'center' });
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8.5);
-  const periodStart = (state.periodStart || state.phaseDays[0]) ? formatDateBR(state.periodStart || state.phaseDays[0]) : '--';
-  const periodEnd = (state.periodEnd || state.endDate) ? formatDateBR(state.periodEnd || state.endDate) : '--';
+  const range = getOverallRange();
+  const periodStart = range ? formatDateBR(range.start) : '--';
+  const periodEnd = range ? formatDateBR(range.end) : '--';
   pdf.text(`${periodStart} ate ${periodEnd}`, pageWidth / 2, 12.8, { align: 'center' });
   pdf.setDrawColor(209, 213, 219);
   pdf.line(8, 15, pageWidth - 8, 15);
@@ -1097,6 +2033,8 @@ function drawMonthCalendarPdfCompact(pdf, monthInfo, x, y, width, height) {
   const startOffset = first.getDay();
   const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
   const monthlyCount = state.phaseDays.filter((date) => date.startsWith(monthPrefix)).length;
+  const schoolCount = schoolActive() ? state.schoolDays.filter((date) => date.startsWith(monthPrefix)).length : 0;
+  const milestoneDate = schoolActive() && state.school.format !== 'subsequent' && state.schoolMilestone ? state.schoolMilestone.date : null;
 
   const headerH = 8;
   const metaH = 5;
@@ -1118,7 +2056,17 @@ function drawMonthCalendarPdfCompact(pdf, monthInfo, x, y, width, height) {
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(7);
   pdf.setTextColor(100, 116, 139);
-  pdf.text(`Dias de pratica: ${monthlyCount}`, x + 2.5, y + 10);
+  if (schoolActive()) {
+    const sc = PDF_COLORS.schoolText;
+    const pc = PDF_COLORS.practiceText;
+    const schoolLabel = `Etapa I (aulas): ${schoolCount}`;
+    pdf.setTextColor(sc[0], sc[1], sc[2]);
+    pdf.text(schoolLabel, x + 2.5, y + 10);
+    pdf.setTextColor(pc[0], pc[1], pc[2]);
+    pdf.text(`Etapa II (prática): ${monthlyCount}`, x + 2.5 + pdf.getTextWidth(schoolLabel) + 4, y + 10);
+  } else {
+    pdf.text(`Dias de pratica: ${monthlyCount}`, x + 2.5, y + 10);
+  }
 
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(6.8);
@@ -1145,42 +2093,67 @@ function drawMonthCalendarPdfCompact(pdf, monthInfo, x, y, width, height) {
       pdf.setDrawColor(225, 229, 236);
       pdf.setFillColor(255, 255, 255);
 
+      let cellStatus = null;
+      let phaseType = null;
       if (inMonth) {
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNumber).padStart(2, '0')}`;
-        const block = findBlockForDate(dateStr);
-        const isPhase = state.phaseDays.includes(dateStr);
+        cellStatus = getDayStatus(dateStr);
         const dayOfWeek = new Date(`${dateStr}T00:00:00`).getDay();
-        if (block) {
-          const color = pdfBlockFillColor(block.type);
+        if (cellStatus.isSchool && cellStatus.isPhase) phaseType = 'both';
+        else if (cellStatus.isSchool) phaseType = 'school';
+        else if (cellStatus.isPhase) phaseType = 'practice';
+        if (!phaseType && cellStatus.block) {
+          const color = pdfBlockFillColor(cellStatus.block.type);
           pdf.setFillColor(color[0], color[1], color[2]);
-        } else if (isPhase) {
-          pdf.setFillColor(220, 252, 231);
-        } else if (dayOfWeek === 0 || dayOfWeek === 6) {
+        } else if (!phaseType && (dayOfWeek === 0 || dayOfWeek === 6 || cellStatus.nonSchool)) {
           pdf.setFillColor(248, 250, 252);
         }
       } else {
         pdf.setFillColor(248, 250, 252);
       }
       pdf.rect(cellX, cellY, cellW, cellH, 'FD');
+      if (phaseType && !(phaseType === 'practice' && !schoolActive())) {
+        drawPhaseSwatch(pdf, phaseType, cellX, cellY, cellW, cellH);
+        pdf.setDrawColor(225, 229, 236);
+        pdf.rect(cellX, cellY, cellW, cellH, 'S');
+      } else if (phaseType === 'practice') {
+        pdf.setFillColor(220, 252, 231);
+        pdf.rect(cellX, cellY, cellW, cellH, 'FD');
+      }
 
       if (inMonth) {
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNumber).padStart(2, '0')}`;
-        const block = findBlockForDate(dateStr);
-        const isPhase = state.phaseDays.includes(dateStr);
+        const { block, isPhase, isSchool, nonSchool } = cellStatus;
         const dayOfWeek = new Date(`${dateStr}T00:00:00`).getDay();
 
         pdf.setTextColor(17, 24, 39);
         pdf.setFont('helvetica', 'bold');
         pdf.text(String(dayNumber).padStart(2, '0'), cellX + 1.4, cellY + 3.2);
+        if (dateStr === milestoneDate) {
+          pdf.setFontSize(5.4);
+          pdf.setTextColor(180, 83, 9);
+          pdf.text('10%', cellX + cellW - 1.2, cellY + 3.2, { align: 'right' });
+          pdf.setTextColor(17, 24, 39);
+        }
         pdf.setFont('helvetica', 'normal');
         pdf.setFontSize(5.4);
-        if (block) {
-          pdf.setTextColor(83, 88, 98);
-          const status = shortBlockLabel(block.type);
-          pdf.text(status, cellX + cellW / 2, cellY + cellH - 1.2, { align: 'center' });
+        if (isSchool && isPhase) {
+          pdf.setTextColor(30, 41, 59);
+          pdf.text('Etapa I+II', cellX + cellW / 2, cellY + cellH - 1.2, { align: 'center' });
+        } else if (isSchool) {
+          const sc = PDF_COLORS.schoolText;
+          pdf.setTextColor(sc[0], sc[1], sc[2]);
+          pdf.text('Etapa I', cellX + cellW / 2, cellY + cellH - 1.2, { align: 'center' });
         } else if (isPhase) {
-          pdf.setTextColor(22, 101, 52);
-          pdf.text('Pratica', cellX + cellW / 2, cellY + cellH - 1.2, { align: 'center' });
+          const pc = PDF_COLORS.practiceText;
+          pdf.setTextColor(pc[0], pc[1], pc[2]);
+          pdf.text(schoolActive() ? 'Etapa II' : 'Pratica', cellX + cellW / 2, cellY + cellH - 1.2, { align: 'center' });
+        } else if (block) {
+          pdf.setTextColor(83, 88, 98);
+          pdf.text(shortBlockLabel(block.type), cellX + cellW / 2, cellY + cellH - 1.2, { align: 'center' });
+        } else if (nonSchool && dayOfWeek !== 0 && dayOfWeek !== 6) {
+          pdf.setTextColor(120, 113, 108);
+          pdf.text('Sem aula', cellX + cellW / 2, cellY + cellH - 1.2, { align: 'center' });
         } else if (dayOfWeek === 0 || dayOfWeek === 6) {
           pdf.setTextColor(148, 163, 184);
           pdf.text('Fim de semana', cellX + cellW / 2, cellY + cellH - 1.2, { align: 'center' });
@@ -1561,6 +2534,15 @@ function resetAll() {
   state.periodEnd = null;
   state.totalHoursResult = 0;
   state.scheduleInputMode = 'hours-to-end';
+  state.school = defaultSchoolState();
+  state.schoolDays = [];
+  state.schoolMilestone = null;
+  schoolPdfPages = [];
+  rebuildDaySets();
+  storeSchoolPdfBytes(null);
+  applySchoolStateToUi();
+  renderLegend();
+  els.calendarHint.style.display = 'none';
 
   els.fillerName.value = '';
   els.clientName.value = '';
