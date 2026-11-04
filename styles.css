@@ -601,10 +601,13 @@ input[readonly] { background: var(--panel-soft); color: var(--muted); cursor: no
 .school-panel-head { display: flex; flex-direction: column; gap: 10px; }
 .school-panel-head small, .practice-format-panel > div > small { display: block; color: var(--muted); margin-top: 4px; }
 .switch-option {
-  display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
-  color: var(--text); font-weight: 600; font-size: .86rem;
+  display: flex; align-items: flex-start; gap: 8px; white-space: normal;
+  color: var(--text); font-weight: 600; font-size: .86rem; line-height: 1.35;
 }
-.switch-option input { width: 16px; height: 16px; margin: 0; }
+.switch-option input { width: 16px; height: 16px; margin: 1px 0 0; flex: none; }
+/* o painel lateral nunca deve ficar mais largo que a coluna */
+.layout > .panel, .controls-panel > *, .school-body, .format-grid, .format-option span { min-width: 0; }
+.import-summary, .format-info, .file-drop-hint { overflow-wrap: anywhere; }
 .school-panel.is-disabled .school-body, .practice-format-panel.is-disabled .format-grid { opacity: .45; pointer-events: none; }
 .file-drop {
   display: grid; gap: 4px; padding: 16px; border: 1.5px dashed var(--school);
