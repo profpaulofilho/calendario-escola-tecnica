@@ -650,3 +650,17 @@ input[readonly] { background: var(--panel-soft); color: var(--muted); cursor: no
 .phase-tag.school { background: var(--school-soft); color: var(--school); }
 .phase-tag.practice { background: var(--practice-soft); color: var(--practice); }
 .report-box .report-note { padding: 10px 12px; border-radius: 12px; background: rgba(245, 158, 11, .12); color: var(--text); }
+
+/* Leitura do PDF da unidade */
+.file-drop.is-busy { opacity: .75; cursor: progress; border-style: dotted; }
+.file-drop.is-busy .file-drop-hint::before { content: '⏳ '; }
+.import-summary {
+  padding: 12px 14px; border-radius: 14px; border: 1px solid var(--practice);
+  background: var(--practice-soft); color: var(--text); font-size: .88rem; line-height: 1.55;
+}
+.import-summary.warn { border-color: #f59e0b; background: rgba(245, 158, 11, .12); }
+.weekday-panel.is-locked { opacity: .45; pointer-events: none; }
+.pdf-preview summary { cursor: pointer; color: var(--school); font-weight: 600; }
+.pdf-preview-pages { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin-top: 10px; }
+.pdf-preview-pages img { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.day.school-off { background: repeating-linear-gradient(135deg, var(--panel-soft) 0 4px, rgba(148, 163, 184, .25) 4px 8px); color: var(--muted); }

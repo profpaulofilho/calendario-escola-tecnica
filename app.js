@@ -47,6 +47,8 @@ function defaultSchoolState() {
     format: 'concurrent',
     pdfName: '',
     pdfPageCount: 0,
+    imported: null,       // calendario lido do PDF da unidade
+    useImported: true,    // usar os dias de aula lidos do PDF
   };
 }
 
@@ -168,7 +170,9 @@ function bindElements() {
     'heroSchoolDays', 'startDateHint', 'schoolPanel', 'schoolEnabled', 'schoolPdf', 'schoolPdfStatus', 'schoolPdfActions',
     'btnRemoveSchoolPdf', 'schoolStart', 'schoolEnd', 'schoolTotalHours', 'schoolHoursPerDay', 'schoolShift', 'schoolTime',
     'nonSchoolStart', 'nonSchoolEnd', 'nonSchoolDescription', 'btnAddNonSchool', 'nonSchoolList', 'calendarHint',
-    'practiceFormatPanel', 'practiceStartInfo'
+    'practiceFormatPanel', 'practiceStartInfo',
+    'schoolImportSummary', 'schoolUseImported', 'schoolUseImportedWrap', 'schoolPdfPreview', 'schoolPdfPreviewPages',
+    'schoolWeekdayPanel', 'schoolManualHint'
   ].forEach((id) => { els[id] = document.getElementById(id); });
 }
 
@@ -206,6 +210,12 @@ function bindEvents() {
     input.addEventListener('change', onSchoolChange);
   });
   els.calendarMount.addEventListener('click', handleCalendarDayClick);
+  els.schoolUseImported.addEventListener('change', () => {
+    state.school.useImported = els.schoolUseImported.checked;
+    state.school.overrides = {};
+    syncSchoolModeUi();
+    saveAppData();
+  });
 }
 
 
@@ -659,7 +669,17 @@ async function ensureAutomaticHolidaysForPeriod(startDate, endDate) {
 function getBlocksWithinCurrentPeriod() {
   if (!state.phaseDays.length || !state.endDate) return state.blocks.filter((block) => !block.automatic);
   const range = getOverallRange();
-  return state.blocks.filter((block) => block.start <= range.end && block.end >= range.start);
+  const list = state.blocks.filter((block) => block.start <= range.end && block.end >= range.start);
+  // Feriados do cronograma da unidade (PDF) que nao estejam na lista
+  if (schoolActive() && usingImportedCalendar()) {
+    Object.entries(state.school.imported.days).forEach(([key, info]) => {
+      if (info.type !== 'holiday' || key < range.start || key > range.end) return;
+      if (list.some((b) => b.type === 'holiday' && key >= b.start && key <= b.end)) return;
+      list.push({ type: 'holiday', description: info.label || 'Feriado', start: key, end: key, automatic: true, holidayScope: 'Cronograma da unidade' });
+    });
+    list.sort((a, b) => a.start.localeCompare(b.start));
+  }
+  return list;
 }
 
 /* ===================== ETAPA I - FASE ESCOLAR SENAI ===================== */
@@ -692,6 +712,7 @@ function applySchoolStateToUi() {
   });
   const formatRadio = document.querySelector(`input[name="practiceFormat"][value="${s.format}"]`);
   if (formatRadio) formatRadio.checked = true;
+  els.schoolUseImported.checked = s.useImported !== false;
   refreshNonSchoolList();
   refreshSchoolPdfStatus();
   syncSchoolModeUi();
@@ -719,12 +740,22 @@ function syncSchoolModeUi() {
   els.practiceFormatPanel.classList.toggle('is-disabled', !active);
   els.startDate.readOnly = active;
   els.startDateHint.hidden = !active;
+  // Com os dias lidos do PDF, periodo e dias da semana vem do proprio cronograma
+  const imported = active && usingImportedCalendar();
+  els.schoolWeekdayPanel.classList.toggle('is-locked', imported);
+  els.schoolManualHint.hidden = !imported;
+  els.schoolStart.readOnly = imported;
+  els.schoolEnd.readOnly = imported;
   updatePracticeStartInfo();
 }
 
 function validateSchoolInputs() {
   const s = state.school;
-  if (!s.start || !s.end) return 'Etapa I: informe o inicio e o termino das aulas (ou desmarque "Incluir Etapa I no cronograma").';
+  if (usingImportedCalendar()) {
+    if (!(s.hoursPerDay > 0)) return 'Etapa I: informe as horas de aula por dia.';
+    return '';
+  }
+  if (!s.start || !s.end) return 'Etapa I: informe o inicio e o termino das aulas ou anexe o PDF do cronograma (ou desmarque "Incluir Etapa I no cronograma").';
   if (s.end < s.start) return 'Etapa I: o termino das aulas nao pode ser anterior ao inicio.';
   if (s.end > MAX_SUPPORTED_DATE) return `Etapa I: a calculadora esta configurada para datas ate ${MAX_SUPPORTED_DATE}.`;
   if (!s.weekdays.length) return 'Etapa I: selecione pelo menos um dia da semana com aula.';
@@ -761,7 +792,12 @@ function calculateSchoolDays() {
   const s = state.school;
   if (!s.enabled) return [];
   const result = new Set();
-  if (s.start && s.end && s.end >= s.start) {
+  if (usingImportedCalendar()) {
+    // Dias de aula exatamente como no PDF da unidade
+    Object.entries(s.imported.days).forEach(([key, info]) => {
+      if (info.type === 'class' && !findNonSchoolForDate(key)) result.add(key);
+    });
+  } else if (s.start && s.end && s.end >= s.start) {
     const cursor = new Date(`${s.start}T00:00:00`);
     const limit = new Date(`${s.end}T00:00:00`);
     const weekdays = s.weekdays.map(Number);
@@ -782,9 +818,35 @@ function calculateSchoolDays() {
   return Array.from(result).sort();
 }
 
+function usingImportedCalendar() {
+  const s = state.school;
+  return Boolean(s && s.useImported && s.imported && s.imported.days && Object.keys(s.imported.days).length);
+}
+
+function getImportedDay(dateStr) {
+  if (!usingImportedCalendar()) return null;
+  return state.school.imported.days[dateStr] || null;
+}
+
+// Horas de aula de um dia: pelos tempos de aula do PDF (quando informados) ou horas/dia
+function getSchoolDayHours(dateStr) {
+  const s = state.school;
+  const info = getImportedDay(dateStr);
+  const meta = (s.imported && s.imported.meta) || {};
+  if (info && info.type === 'class' && info.slots && meta.classMinutes) {
+    const max = meta.classesPerDay || 12;
+    if (info.slots >= 1 && info.slots <= max) return Math.round((info.slots * meta.classMinutes) / 6) / 10;
+  }
+  return Number(s.hoursPerDay || 0);
+}
+
+function sumSchoolHours(days) {
+  return Math.round(days.reduce((sum, d) => sum + getSchoolDayHours(d), 0) * 10) / 10;
+}
+
 function getSchoolTotalHours() {
   const informed = Number(state.school.totalHours || 0);
-  return informed > 0 ? informed : state.schoolDays.length * (state.school.hoursPerDay || 0);
+  return informed > 0 ? informed : sumSchoolHours(state.schoolDays);
 }
 
 // Inicio da Etapa II conforme o formato escolhido
@@ -801,7 +863,7 @@ function computePracticeStart() {
   const threshold = getSchoolTotalHours() * 0.10;
   let accumulated = 0;
   for (const day of days) {
-    accumulated += s.hoursPerDay;
+    accumulated += getSchoolDayHours(day);
     if (accumulated >= threshold - 1e-9) {
       state.schoolMilestone = { date: day, hours: Math.round(accumulated * 10) / 10, threshold: Math.round(threshold * 10) / 10 };
       return addDays(day, 1);
@@ -820,11 +882,23 @@ function addDays(dateStr, amount) {
 function getSchoolSummary() {
   const s = state.school;
   const days = state.schoolDays;
-  const scheduledHours = days.length * (s.hoursPerDay || 0);
+  const scheduledHours = sumSchoolHours(days);
   const totalHours = getSchoolTotalHours();
   let mismatch = '';
-  if (Number(s.totalHours) > 0 && scheduledHours !== Number(s.totalHours)) {
+  if (Number(s.totalHours) > 0 && Math.abs(scheduledHours - Number(s.totalHours)) > 0.5) {
     mismatch = `Atencao: os dias de aula do calendario somam ${scheduledHours} h, mas a carga horaria informada da fase escolar e ${s.totalHours} h. Confira o periodo, os dias sem aula ou ajuste os dias clicando no calendario.`;
+  }
+  const imported = usingImportedCalendar() ? s.imported : null;
+  let pdfHolidays = 0;
+  let pdfOff = 0;
+  if (imported) {
+    const first = days[0] || '';
+    const last = days[days.length - 1] || '';
+    Object.entries(imported.days).forEach(([key, info]) => {
+      if (key < first || key > last) return;
+      if (info.type === 'holiday') pdfHolidays += 1;
+      if (info.type === 'off') pdfOff += 1;
+    });
   }
   return {
     start: days[0] || s.start,
@@ -833,6 +907,9 @@ function getSchoolSummary() {
     scheduledHours,
     totalHours,
     mismatch,
+    source: imported ? (imported.source === 'ocr' ? 'pdf-ocr' : 'pdf') : 'manual',
+    pdfHolidays,
+    pdfOff,
   };
 }
 
@@ -1013,105 +1090,347 @@ async function handleSchoolPdfSelected(event) {
     alert('Selecione um arquivo PDF.');
     return;
   }
-  els.schoolPdfStatus.textContent = 'Lendo o PDF...';
+  setSchoolPdfBusy(true, 'Lendo o PDF...');
   try {
     const bytes = await file.arrayBuffer();
-    const { pages, text } = await processSchoolPdf(bytes.slice(0));
-    schoolPdfPages = pages;
+    const result = await readSchoolPdf(bytes.slice(0), (msg) => setSchoolPdfBusy(true, msg));
+    schoolPdfPages = result.previews;
     state.school.pdfName = file.name;
-    state.school.pdfPageCount = pages.length;
+    state.school.pdfPageCount = result.previews.length;
     await storeSchoolPdfBytes(bytes);
-
-    const detected = detectSchoolInfoFromText(text);
-    const found = [];
-    if (detected.start && detected.end) {
-      els.schoolStart.value = detected.start;
-      els.schoolEnd.value = detected.end;
-      found.push(`período ${formatDateBR(detected.start)} a ${formatDateBR(detected.end)}`);
+    const ok = applyImportedCalendar(result.parsed, result.source);
+    if (!ok) {
+      alert(result.source === 'ocr'
+        ? 'Nao foi possivel identificar os dias de aula neste PDF (imagem digitalizada). Informe o periodo, a carga horaria e os dias da semana manualmente e ajuste os dias clicando no calendario.'
+        : 'Nao foi possivel identificar os dias de aula neste PDF. Informe o periodo, a carga horaria e os dias da semana manualmente e ajuste os dias clicando no calendario.');
     }
-    if (detected.totalHours && !els.schoolTotalHours.value) {
-      els.schoolTotalHours.value = detected.totalHours;
-      found.push(`carga horária ${detected.totalHours} h`);
-    }
-    readSchoolInputs();
-    let message;
-    if (found.length) message = ` Identificado: ${found.join(' e ')} — confira.`;
-    else if (!text.trim()) message = ' O PDF é uma imagem digitalizada: informe abaixo o período e a carga horária das aulas.';
-    else message = ' Não foi possível identificar as datas: informe abaixo o período e a carga horária das aulas.';
     saveAppData();
-    refreshSchoolPdfStatus(message);
   } catch (error) {
     console.error(error);
     alert(`Nao foi possivel ler o PDF. ${error && error.message ? error.message : ''}`.trim());
+  } finally {
+    setSchoolPdfBusy(false);
     refreshSchoolPdfStatus();
+    renderSchoolPdfPreview();
   }
 }
 
-async function processSchoolPdf(bytes) {
+function setSchoolPdfBusy(busy, message = '') {
+  const drop = els.schoolPdf.closest('.file-drop');
+  drop.classList.toggle('is-busy', busy);
+  els.schoolPdf.disabled = busy;
+  // Evita gerar o calendario antes de terminar a leitura do PDF
+  els.btnGenerate.disabled = busy;
+  els.btnExportPdf.disabled = busy;
+  if (busy) {
+    if (!els.btnGenerate.dataset.label) els.btnGenerate.dataset.label = els.btnGenerate.textContent;
+    els.btnGenerate.textContent = 'Aguarde a leitura do PDF...';
+    els.schoolPdfStatus.textContent = message;
+  } else if (els.btnGenerate.dataset.label) {
+    els.btnGenerate.textContent = els.btnGenerate.dataset.label;
+  }
+}
+
+// Le o PDF: texto (quando existir) ou OCR (PDF digitalizado) e interpreta o calendario
+async function readSchoolPdf(bytes, onProgress) {
   const pdfjs = getPdfJs();
   if (!pdfjs) throw new Error('A biblioteca de leitura de PDF nao foi carregada. Verifique sua conexao.');
+  if (!window.SchoolPdfParser) throw new Error('O leitor de cronogramas nao foi carregado.');
   const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise;
-  const pages = [];
-  let text = '';
+  const textPages = [];
+  const previews = [];
+  let textCount = 0;
   for (let number = 1; number <= doc.numPages; number += 1) {
+    onProgress(`Lendo página ${number} de ${doc.numPages}...`);
     const page = await doc.getPage(number);
-    const viewport1 = page.getViewport({ scale: 1 });
-    const scale = Math.min(2.2, 1800 / Math.max(viewport1.width, viewport1.height));
-    const viewport = page.getViewport({ scale });
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(viewport.width);
-    canvas.height = Math.round(viewport.height);
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvasContext: ctx, viewport }).promise;
-    pages.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), width: viewport1.width, height: viewport1.height });
+    let items = [];
     try {
-      const content = await page.getTextContent();
-      text += ` ${content.items.map((item) => item.str).join(' ')}`;
+      items = (await page.getTextContent()).items || [];
     } catch (error) {
       console.error(error);
     }
+    textCount += items.filter((it) => it.str && it.str.trim()).length;
+    textPages.push({ items });
+    const canvas = await renderPdfPage(page, 1.5);
+    previews.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.8) });
   }
-  return { pages, text };
+
+  let parsed = null;
+  let source = 'text';
+  if (textCount > 20) parsed = window.SchoolPdfParser.parse(textPages);
+  const classDays = parsed ? Object.values(parsed.days).filter((d) => d.type === 'class').length : 0;
+  if (!classDays) {
+    // Sem texto aproveitavel: PDF digitalizado -> leitura por imagem (OCR) + cor das celulas
+    source = 'ocr';
+    parsed = await ocrSchoolPdf(doc, onProgress);
+  }
+  return { parsed, source, previews };
 }
 
-// Quando o PDF possui texto: identifica periodo (datas dd/mm/aaaa) e carga horaria ("1000 horas")
-function detectSchoolInfoFromText(text) {
-  const result = {};
-  if (!text || !text.trim()) return result;
-  const cleaned = text.replace(/Gerado[^0-9]*\d{2}\/\d{2}\/\d{4}/gi, ' ');
-  const dates = [];
-  const regex = /\b(\d{2})\/(\d{2})\/(\d{4})\b/g;
-  let match;
-  while ((match = regex.exec(cleaned))) {
-    const [, d, m, y] = match;
-    if (Number(m) >= 1 && Number(m) <= 12 && Number(d) >= 1 && Number(d) <= 31 && Number(y) >= 2000) dates.push(`${y}-${m}-${d}`);
+async function renderPdfPage(page, scale) {
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(viewport.width);
+  canvas.height = Math.round(viewport.height);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  return canvas;
+}
+
+function rotateCanvas(source, angle) {
+  if (!angle) return source;
+  const canvas = document.createElement('canvas');
+  const swap = angle % 180 !== 0;
+  canvas.width = swap ? source.height : source.width;
+  canvas.height = swap ? source.width : source.height;
+  const ctx = canvas.getContext('2d');
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate((angle * Math.PI) / 180);
+  ctx.drawImage(source, -source.width / 2, -source.height / 2);
+  return canvas;
+}
+
+const TESSERACT_URLS = {
+  script: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
+  worker: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js',
+  core: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1',
+  lang: 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/por@1.0.0/4.0.0_best_int',
+};
+
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = TESSERACT_URLS.script;
+    script.onload = () => (window.Tesseract ? resolve(window.Tesseract) : reject(new Error('OCR indisponivel.')));
+    script.onerror = () => reject(new Error('Nao foi possivel carregar o leitor de imagem (OCR). Verifique sua conexao.'));
+    document.head.appendChild(script);
+  });
+}
+
+const OCR_SCALE = 200 / 72; // ~200 dpi
+
+async function ocrSchoolPdf(doc, onProgress) {
+  onProgress('PDF digitalizado: preparando leitura de imagem (OCR)...');
+  const Tesseract = await loadTesseract();
+  const options = { workerPath: TESSERACT_URLS.worker, corePath: TESSERACT_URLS.core, langPath: TESSERACT_URLS.lang };
+  const cores = Math.max(1, (navigator.hardwareConcurrency || 2) - 1);
+  const workerCount = Math.max(1, Math.min(3, cores, doc.numPages));
+  const workers = await Promise.all(Array.from({ length: workerCount }, () => Tesseract.createWorker('por', 1, options)));
+  try {
+    await Promise.all(workers.map((w) => w.setParameters({ tessedit_pageseg_mode: '11' })));
+
+    // Orientacao: testa a 1a pagina em resolucao menor (0, 270, 90 e 180 graus)
+    onProgress('Identificando a orientação das páginas...');
+    const firstPage = await doc.getPage(1);
+    const probe = await renderPdfPage(firstPage, 1.6);
+    const scoreWords = (words) => words.filter((w) => w.confidence > 55 && (
+      /^(dom|seg|ter|qua|qui|sex|s[áa]b)$/i.test(w.text) || /^\d{1,2}:\d{2}$/.test(w.text)
+      || /^(janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)/i.test(w.text)
+    )).length;
+    const angles = [0, 270, 90, 180];
+    const scores = await Promise.all(angles.slice(0, Math.max(1, workerCount)).map(async (a, i) => {
+      const { data } = await workers[i].recognize(rotateCanvas(probe, a));
+      return scoreWords(data.words || []);
+    }));
+    let angle = angles[scores.indexOf(Math.max(...scores))];
+    if (Math.max(...scores) < 10) {
+      for (const a of angles.slice(scores.length)) {
+        const { data } = await workers[0].recognize(rotateCanvas(probe, a));
+        const sc = scoreWords(data.words || []);
+        if (sc > Math.max(...scores)) { scores.push(sc); angle = a; }
+      }
+    }
+
+    // Leitura das paginas em paralelo
+    const pages = new Array(doc.numPages);
+    const colorData = new Array(doc.numPages);
+    let next = 0;
+    let done = 0;
+    const runWorker = async (worker) => {
+      while (next < doc.numPages) {
+        const index = next;
+        next += 1;
+        const base = await renderPdfPage(await doc.getPage(index + 1), OCR_SCALE);
+        const rotated = rotateCanvas(base, angle);
+        const { data } = await worker.recognize(rotated);
+        pages[index] = {
+          items: (data.words || [])
+            .filter((w) => w.confidence >= 55 && w.text && /[A-Za-z0-9À-ú]/.test(w.text) && !/[\[\]{}|]/.test(w.text))
+            .map((w) => ({
+              str: w.text.trim(),
+              transform: [1, 0, 0, 1, w.bbox.x0 / OCR_SCALE, -(w.bbox.y1 / OCR_SCALE)],
+              width: (w.bbox.x1 - w.bbox.x0) / OCR_SCALE,
+            })),
+        };
+        // copia reduzida (1 px = 1 pt) para ler a cor das celulas
+        const small = document.createElement('canvas');
+        small.width = Math.round(rotated.width / OCR_SCALE);
+        small.height = Math.round(rotated.height / OCR_SCALE);
+        small.getContext('2d').drawImage(rotated, 0, 0, small.width, small.height);
+        colorData[index] = small.getContext('2d').getImageData(0, 0, small.width, small.height);
+        done += 1;
+        onProgress(`Lendo imagem das páginas (OCR): ${done} de ${doc.numPages} concluída(s)...`);
+      }
+    };
+    onProgress(`Lendo imagem das páginas (OCR): 0 de ${doc.numPages}...`);
+    await Promise.all(workers.map(runWorker));
+
+    return window.SchoolPdfParser.parse(pages, {
+      minClassTokens: 1,
+      classTokenRe: /^[A-Za-zÀ-ú]{2,6}\d{2,3}$/,
+      cellColor: (pageIndex, region) => classifyCellColor(colorData[pageIndex], region),
+    });
+  } finally {
+    await Promise.all(workers.map((w) => w.terminate()));
   }
-  if (dates.length >= 2) {
-    dates.sort();
-    result.start = dates[0];
-    result.end = dates[dates.length - 1];
+}
+
+// Cor predominante de uma celula: azul/lilas = aula, laranja = recesso, cinza = nao letivo
+function classifyCellColor(img, region) {
+  if (!img) return null;
+  const x0 = Math.max(0, Math.round(region.x0));
+  const x1 = Math.min(img.width - 1, Math.round(region.x1));
+  const y0 = Math.max(0, Math.round(region.y0));
+  const y1 = Math.min(img.height - 1, Math.round(region.y1));
+  let total = 0;
+  let blue = 0;
+  let orange = 0;
+  let gray = 0;
+  for (let y = y0; y <= y1; y += 1) {
+    for (let x = x0; x <= x1; x += 1) {
+      const i = (y * img.width + x) * 4;
+      const r = img.data[i];
+      const g = img.data[i + 1];
+      const b = img.data[i + 2];
+      total += 1;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      if (max > 235 && min > 225) continue;
+      if (max - min < 18 && max > 120 && max <= 235) { gray += 1; continue; }
+      if (b > r + 25 && b > g + 25) { blue += 1; continue; }
+      if (r > 180 && g > 90 && g < 190 && b < 90 && r - g > 50) orange += 1;
+    }
   }
-  const hours = cleaned.match(/(\d{2,4})\s*(?:horas|h)\b/i);
-  if (hours && Number(hours[1]) >= 100) result.totalHours = Number(hours[1]);
-  return result;
+  if (!total) return null;
+  if (blue / total > 0.15) return 'class';
+  if (orange / total > 0.15) return 'recess';
+  if (gray / total > 0.35) return 'off';
+  return null;
+}
+
+// Aplica o calendario lido do PDF na Etapa I
+function applyImportedCalendar(parsed, source) {
+  const days = (parsed && parsed.days) || {};
+  const classDays = Object.keys(days).filter((k) => days[k].type === 'class').sort();
+  if (!classDays.length) {
+    state.school.imported = null;
+    state.school.lastImportMessage = 'Não foi possível identificar os dias de aula neste PDF. Informe o período e os dias manualmente.';
+    applySchoolStateToUi();
+    return false;
+  }
+  const meta = parsed.meta || {};
+  state.school.imported = {
+    days,
+    meta,
+    months: parsed.months || [],
+    warnings: parsed.warnings || [],
+    source,
+  };
+  state.school.useImported = true;
+  state.school.overrides = {};
+  state.school.lastImportMessage = '';
+  state.school.start = classDays[0];
+  state.school.end = classDays[classDays.length - 1];
+  if (meta.classesPerDay && meta.classMinutes) state.school.hoursPerDay = Math.round((meta.classesPerDay * meta.classMinutes) / 6) / 10;
+  else if (meta.classesPerDay) state.school.hoursPerDay = meta.classesPerDay;
+  state.school.totalHours = meta.totalHours || '';
+  if (!state.school.totalHours) state.school.totalHours = sumSchoolHoursOf(classDays);
+  if (meta.shift) state.school.shift = meta.shift;
+  if (meta.time) state.school.time = meta.time;
+  applySchoolStateToUi();
+  return true;
+}
+
+function sumSchoolHoursOf(days) {
+  const previous = state.schoolDays;
+  const total = sumSchoolHours(days);
+  state.schoolDays = previous;
+  return total;
+}
+
+// Resumo do que foi lido do PDF (mostrado abaixo do campo de arquivo)
+function renderImportSummary() {
+  const box = els.schoolImportSummary;
+  if (!box) return;
+  const s = state.school;
+  const imported = s.imported;
+  if (!imported) {
+    box.hidden = !s.lastImportMessage;
+    box.className = 'import-summary warn';
+    box.textContent = s.lastImportMessage || '';
+    els.schoolUseImportedWrap.hidden = true;
+    return;
+  }
+  const entries = Object.entries(imported.days);
+  const classDays = entries.filter(([, v]) => v.type === 'class').map(([k]) => k).sort();
+  const holidays = entries.filter(([, v]) => v.type === 'holiday').length;
+  const off = entries.filter(([, v]) => v.type === 'off').length;
+  const hours = sumSchoolHours(classDays);
+  const meta = imported.meta || {};
+  const ocr = imported.source === 'ocr';
+  const parts = [
+    `<strong>${ocr ? '🔎 Lido por imagem (OCR)' : '✅ Cronograma lido do PDF'}:</strong> ${classDays.length} dias de aula, de ${formatDateBR(classDays[0])} a ${formatDateBR(classDays[classDays.length - 1])} (${hours} h).`,
+    `${holidays} feriado(s) e ${off} dia(s) sem aula/recesso identificados.`,
+  ];
+  if (meta.totalHours) {
+    const diff = Math.abs(hours - meta.totalHours) > 0.5;
+    parts.push(`Carga horária no PDF: <strong>${meta.totalHours} h</strong>${diff ? ' — <strong>diferente</strong> da soma dos dias lidos; confira o calendário.' : ' — confere com os dias lidos.'}`);
+  }
+  if (meta.course) parts.push(`Curso: ${escapeHtml(meta.course)}${meta.classCode && !ocr ? ` • Turma ${escapeHtml(meta.classCode)}` : ''}`);
+  if (ocr) parts.push('PDF digitalizado: a leitura usa reconhecimento de texto e a cor das células. Confira os dias no calendário e clique para corrigir, se necessário.');
+  (imported.warnings || []).forEach((w) => parts.push(`⚠️ ${escapeHtml(w)}`));
+  box.className = `import-summary${ocr || (imported.warnings || []).length ? ' warn' : ''}`;
+  box.innerHTML = parts.join('<br>');
+  box.hidden = false;
+  els.schoolUseImportedWrap.hidden = false;
+}
+
+function renderSchoolPdfPreview() {
+  const wrap = els.schoolPdfPreview;
+  if (!wrap) return;
+  if (!schoolPdfPages.length) {
+    wrap.hidden = true;
+    els.schoolPdfPreviewPages.innerHTML = '';
+    return;
+  }
+  wrap.hidden = false;
+  els.schoolPdfPreviewPages.innerHTML = schoolPdfPages
+    .map((p, i) => `<a href="${p.dataUrl}" target="_blank" rel="noopener" title="Abrir página ${i + 1}"><img src="${p.dataUrl}" alt="Página ${i + 1} do cronograma" loading="lazy"></a>`)
+    .join('');
 }
 
 async function restoreSchoolPdf() {
+  renderImportSummary();
   if (!state.school.pdfName) return;
   const bytes = await readSchoolPdfBytes();
-  if (!bytes) {
-    refreshSchoolPdfStatus(' Selecione o arquivo novamente para anexá-lo ao PDF.');
-    return;
-  }
+  if (!bytes) return;
   try {
-    const { pages } = await processSchoolPdf(bytes);
-    schoolPdfPages = pages;
+    const pdfjs = getPdfJs();
+    if (!pdfjs) return;
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise;
+    const previews = [];
+    for (let number = 1; number <= doc.numPages; number += 1) {
+      const canvas = await renderPdfPage(await doc.getPage(number), 1.5);
+      previews.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.8) });
+    }
+    schoolPdfPages = previews;
     refreshSchoolPdfStatus();
+    renderSchoolPdfPreview();
   } catch (error) {
     console.error(error);
-    refreshSchoolPdfStatus(' Selecione o arquivo novamente para anexá-lo ao PDF.');
   }
 }
 
@@ -1119,24 +1438,29 @@ async function removeSchoolPdf() {
   schoolPdfPages = [];
   state.school.pdfName = '';
   state.school.pdfPageCount = 0;
+  state.school.imported = null;
+  state.school.lastImportMessage = '';
+  state.school.overrides = {};
   await storeSchoolPdfBytes(null);
-  refreshSchoolPdfStatus();
+  applySchoolStateToUi();
+  renderSchoolPdfPreview();
   saveAppData();
 }
 
-function refreshSchoolPdfStatus(extra = '') {
+function refreshSchoolPdfStatus() {
   const drop = els.schoolPdf.closest('.file-drop');
   const name = state.school.pdfName;
   if (name) {
     const count = schoolPdfPages.length || state.school.pdfPageCount || 0;
-    els.schoolPdfStatus.textContent = `${name} • ${count} página(s).${extra}`;
+    els.schoolPdfStatus.textContent = `${name} • ${count} página(s). Clique para trocar o arquivo.`;
     drop.classList.add('has-file');
     els.schoolPdfActions.style.display = '';
   } else {
-    els.schoolPdfStatus.textContent = 'Clique para selecionar o arquivo PDF emitido pela unidade.';
+    els.schoolPdfStatus.textContent = 'Clique para selecionar o PDF do cronograma (qualquer formato: com texto ou digitalizado).';
     drop.classList.remove('has-file');
     els.schoolPdfActions.style.display = 'none';
   }
+  renderImportSummary();
 }
 
 async function generateSchedule(options) {
@@ -1360,7 +1684,14 @@ function isValidPracticeDay(date) {
 }
 
 function findBlockForDate(dateStr) {
-  return state.blocks.find((block) => dateStr >= block.start && dateStr <= block.end) || null;
+  const block = state.blocks.find((item) => dateStr >= item.start && dateStr <= item.end);
+  if (block) return block;
+  // Feriados marcados no cronograma da unidade (PDF)
+  const info = state.school && state.school.enabled ? getImportedDay(dateStr) : null;
+  if (info && info.type === 'holiday') {
+    return { type: 'holiday', description: info.label || 'Feriado', start: dateStr, end: dateStr, automatic: true, holidayScope: 'Cronograma da unidade', fromPdf: true };
+  }
+  return null;
 }
 
 function renderCalendar() {
@@ -1406,6 +1737,7 @@ function renderMonthCard({ year, month }) {
     if (status.isPhase) classes.push('phase');
     if (status.isSchool) classes.push('school');
     if (status.block && !status.isSchool && !status.isPhase) classes.push(`block-${status.block.type}`);
+    else if (status.nonSchool && !status.isSchool && !status.isPhase) classes.push('school-off');
     if (schoolActive() && Object.prototype.hasOwnProperty.call(overrides, key)) classes.push('override');
     let title = status.title;
     if (key === milestoneDate) {
@@ -1436,7 +1768,11 @@ function getDayStatus(key) {
   const block = findBlockForDate(key);
   const isPhase = phaseDaySet.has(key);
   const isSchool = schoolActive() && schoolDaySet.has(key);
-  const nonSchool = schoolActive() ? findNonSchoolForDate(key) : null;
+  let nonSchool = schoolActive() ? findNonSchoolForDate(key) : null;
+  if (!nonSchool && schoolActive()) {
+    const info = getImportedDay(key);
+    if (info && info.type === 'off') nonSchool = { description: info.label || 'Sem aula', fromPdf: true };
+  }
   let title = '';
   if (isSchool && isPhase) title = 'Etapa I (aula SENAI) + Etapa II (pratica na empresa, turno oposto)';
   else if (isSchool) title = 'Etapa I - Fase escolar SENAI';
@@ -1471,7 +1807,8 @@ function renderReport(hoursPerDay, totalHours, mode) {
         <div><strong>Dias de aula:</strong> ${info.days} dias (${info.scheduledHours} h no calendario)</div>
         <div><strong>Carga horaria da fase escolar:</strong> ${info.totalHours} h</div>
         <div><strong>Aulas:</strong> ${sc.hoursPerDay} h/dia • ${SHIFT_LABELS[sc.shift] || ''}${sc.time ? ` (${escapeHtml(sc.time)})` : ''}</div>
-        <div><strong>Cronograma da unidade:</strong> ${sc.pdfName ? `${escapeHtml(sc.pdfName)} (anexado ao PDF)` : 'Nao anexado'}</div>
+        <div><strong>Dias de aula:</strong> ${info.source === 'manual' ? 'informados manualmente (periodo + dias da semana)' : `lidos do PDF da unidade${sc.pdfName ? ` (${escapeHtml(sc.pdfName)})` : ''}${info.source === 'pdf-ocr' ? ' por leitura de imagem (OCR) - confira' : ''}`}</div>
+        ${info.source !== 'manual' ? `<div><strong>Sem aula no cronograma:</strong> ${info.pdfHolidays} feriado(s) e ${info.pdfOff} dia(s) sem aula/recesso</div>` : ''}
         ${state.schoolMilestone ? `<div><strong>10% da carga horaria escolar:</strong> ${state.schoolMilestone.hours} h concluidas em ${formatDateBR(state.schoolMilestone.date)}</div>` : ''}
       </div>
       ${info.mismatch ? `<p class="report-note">${escapeHtml(info.mismatch)}</p>` : ''}
@@ -1531,8 +1868,11 @@ function buildMonthlyReport(days, hoursPerDay) {
     return map.get(key);
   };
   days.forEach((date) => { ensure(date.slice(0, 7)).practice += 1; });
-  if (schoolActive()) state.schoolDays.forEach((date) => { ensure(date.slice(0, 7)).school += 1; });
-  const schoolHoursPerDay = Number(state.school.hoursPerDay || 0);
+  if (schoolActive()) state.schoolDays.forEach((date) => {
+    const entry = ensure(date.slice(0, 7));
+    entry.school += 1;
+    entry.schoolHours = (entry.schoolHours || 0) + getSchoolDayHours(date);
+  });
 
   return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([key, counts]) => {
     const [year, month] = key.split('-').map(Number);
@@ -1541,7 +1881,7 @@ function buildMonthlyReport(days, hoursPerDay) {
       days: counts.practice,
       hours: counts.practice * hoursPerDay,
       schoolDays: counts.school,
-      schoolHours: counts.school * schoolHoursPerDay,
+      schoolHours: Math.round((counts.schoolHours || 0) * 10) / 10,
     };
   });
 }
@@ -1581,7 +1921,6 @@ async function exportPdf() {
     const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const senaiLogoDataUrl = await getSenaiLogoDataUrl();
     appendCalendarPagesLandscape(pdf, senaiLogoDataUrl);
-    appendSchoolPdfAnnex(pdf);
 
     const safeFiller = sanitizeFilePart(els.fillerName.value || 'ficha');
     const safeClient = sanitizeFilePart(els.clientName.value || 'cliente');
@@ -1766,7 +2105,9 @@ function appendContractSummaryPage(pdf, senaiLogoDataUrl) {
     `Carga horária da fase escolar: ${info.totalHours} h`,
     `Dias de aula: ${info.days} (${info.scheduledHours} h no calendário)`,
     `Aulas: ${s.hoursPerDay} h/dia • turno ${(SHIFT_LABELS[s.shift] || '').toLowerCase()}${s.time ? ` (${s.time})` : ''}`,
-    `Cronograma da unidade: ${s.pdfName ? 'anexo ao final deste documento' : 'não anexado'}`,
+    info.source === 'manual'
+      ? 'Dias de aula: informados manualmente (período + dias da semana)'
+      : `Dias de aula: conforme cronograma da unidade (PDF) • ${info.pdfHolidays} feriado(s), ${info.pdfOff} dia(s) sem aula`,
   ];
   const practiceLines = [
     `Formato: ${fmt.label}`,
@@ -1877,33 +2218,6 @@ function appendContractSummaryPage(pdf, senaiLogoDataUrl) {
   });
 }
 
-// Anexa as paginas do cronograma da fase escolar (PDF da unidade)
-function appendSchoolPdfAnnex(pdf) {
-  if (!schoolActive() || !schoolPdfPages.length) return;
-  const total = schoolPdfPages.length;
-  schoolPdfPages.forEach((page, index) => {
-    const orientation = page.width > page.height ? 'landscape' : 'portrait';
-    pdf.addPage('a4', orientation);
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const margin = 6;
-    const headerH = 7;
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(8.5);
-    const sc = PDF_COLORS.schoolText;
-    pdf.setTextColor(sc[0], sc[1], sc[2]);
-    pdf.text(`ANEXO - Etapa I - Cronograma da fase escolar SENAI (PDF da unidade) - página ${index + 1} de ${total}`, margin, margin + 2.5);
-    const school = PDF_COLORS.school;
-    pdf.setFillColor(school[0], school[1], school[2]);
-    pdf.rect(margin, margin + 4, pageWidth - margin * 2, 1, 'F');
-    const availW = pageWidth - margin * 2;
-    const availH = pageHeight - margin * 2 - headerH;
-    const ratio = Math.min(availW / page.width, availH / page.height);
-    const w = page.width * ratio;
-    const h = page.height * ratio;
-    pdf.addImage(page.dataUrl, 'JPEG', (pageWidth - w) / 2, margin + headerH + (availH - h) / 2, w, h, undefined, 'FAST');
-  });
-}
 
 function drawLandscapeCalendarFooter(pdf, x, y) {
   pdf.setFont('helvetica', 'normal');

@@ -3,7 +3,7 @@
 Aplicação web estática para uso no GitHub Pages.
 
 ## Novidades — Etapa I (fase escolar SENAI) e Etapa II (fase prática EMPRESA)
-- **Etapa I – Fase escolar SENAI:** importação do PDF com o cronograma da fase escolar disponibilizado pela unidade (anexado ao final do PDF final), período das aulas, carga horária da fase escolar, horas/dia, turno, dias da semana e recessos/dias sem aula.
+- **Etapa I – Fase escolar SENAI:** leitura automática do PDF do cronograma da unidade (`pdf-calendar-parser.js`): dias de aula, feriados e dias sem aula/recesso, carga horária, aulas por dia, turno e horário. Aceita PDF com texto (qualquer layout: grade semanal ou linha do tempo, inclusive girado) e PDF digitalizado/imagem (OCR com Tesseract.js + cor das células). Se o PDF não puder ser lido, os dados podem ser informados manualmente.
 - **Etapa II – Formato da fase prática EMPRESA**, com início calculado automaticamente:
   - **Subsequente:** a prática inicia após a conclusão da fase escolar.
   - **Concomitante:** inicia após 10% da carga horária da fase escolar, no turno oposto às aulas (mesmos dias).

@@ -142,13 +142,21 @@
           <div class="school-body">
             <label class="file-drop spacing-top" for="schoolPdf">
               <span class="file-drop-title">📄 Cronograma da fase escolar (PDF da unidade)</span>
-              <span class="file-drop-hint" id="schoolPdfStatus">Clique para selecionar o arquivo PDF emitido pela unidade.</span>
+              <span class="file-drop-hint" id="schoolPdfStatus">Clique para selecionar o PDF do cronograma (qualquer formato: com texto ou digitalizado).</span>
               <input id="schoolPdf" type="file" accept="application/pdf,.pdf" />
             </label>
             <div class="inline-actions spacing-top" id="schoolPdfActions" style="display:none;">
               <button class="secondary-btn" id="btnRemoveSchoolPdf" type="button">Remover PDF</button>
-              <span class="helper-text">O PDF será anexado ao final do documento impresso.</span>
             </div>
+            <div id="schoolImportSummary" class="import-summary spacing-top" hidden></div>
+            <label class="switch-option spacing-top" id="schoolUseImportedWrap" hidden>
+              <input type="checkbox" id="schoolUseImported" checked />
+              Usar os dias de aula, feriados e dias sem aula lidos do PDF
+            </label>
+            <details class="pdf-preview spacing-top" id="schoolPdfPreview" hidden>
+              <summary>Ver páginas do PDF da unidade</summary>
+              <div id="schoolPdfPreviewPages" class="pdf-preview-pages"></div>
+            </details>
 
             <div class="grid two compact spacing-top">
               <label>
@@ -181,7 +189,8 @@
               </label>
             </div>
 
-            <div class="weekday-panel spacing-top">
+            <p id="schoolManualHint" class="helper-text spacing-top" hidden>Período e dias de aula definidos pelo PDF. Para informar manualmente, desmarque "Usar os dias ... lidos do PDF".</p>
+            <div class="weekday-panel spacing-top" id="schoolWeekdayPanel">
               <span class="weekday-title">Dias da semana com aula no SENAI</span>
               <div class="weekday-grid">
                 <label class="weekday-option"><input type="checkbox" class="school-weekday-check" value="1" checked> Seg.</label>
@@ -350,6 +359,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="pdf-calendar-parser.js"></script>
   <script src="app.js"></script>
   <script>
   fetch('https://rbqaspkaytbplgrplelf.supabase.co/rest/v1/rpc/increment_link_click', {
